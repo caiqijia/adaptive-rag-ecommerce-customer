@@ -423,3 +423,9 @@ Critic 96%，**P50 24.8s / P90 43.0s**——精排把 P50 从约 4s 拉到 24.8s
 
 - Adaptive-RAG: Learning to Adapt Retrieval-Augmented Large Language Models through Question Complexity (Jeong et al., NAACL 2024)
 - Reciprocal Rank Fusion outperforms Condorcet and individual Rank Learning Methods (Cormack et al., SIGIR 2009)
+
+---
+
+## 📄 License
+
+[MIT](LICENSE) © 2026 蔡启嘉
