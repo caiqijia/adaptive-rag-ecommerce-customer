@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<!--
+  index.html — Adaptive-RAG 电商客服系统 前端演示页（单文件、零依赖）
+
+  【后端契约】POST /agent/chat，SSE 事件流:
+    start → route → [faq/decompose] → round × N → answer_start → chunk × N → citations → done
+    拒答时：start → route → round × N → refused → done
+    异常时：任意位置可能出现 error
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Adaptive-RAG 电商客服系统</title>
+<style>
+  :root {
+    --primary: #2563eb;        /* 主色：信任蓝 */
+    --primary-light: #eff6ff;
+    --bg: #f5f7fa;
+    --card: #ffffff;
+    --border: #e5e7eb;
+    --text: #1f2937;
+    --text-2: #6b7280;
+    --ok: #059669;              /* 通过/命中：绿 */
+    --err: #dc2626;             /* 拒答/失败：红 */
+    --warn: #d97706;            /* 重试/降级：琥珀 */
+    --radius: 12px;
+    --shadow: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                 "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    background: var(--bg); color: var(--text); height: 100vh; overflow: hidden;
+  }
+  .app { display: flex; flex-direction: column; height: 100vh; max-width: 1280px; margin: 0 auto; }
+
+  /* ============ 顶栏 ============ */
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 20px; background: var(--card); border-bottom: 1px solid var(--border);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand .logo { font-size: 22px; }
+  .brand h1 { font-size: 16px; font-weight: 600; }
+  .brand .sub { font-size: 13px; color: var(--text-2); margin-left: 4px; }
+  .actions { display: flex; align-items: center; gap: 12px; }
+  #backendState { font-size: 13px; color: var(--text-2); display: flex; align-items: center; gap: 5px; }
+  #backendState .dot { width: 8px; height: 8px; border-radius: 50%; background: #d1d5db; }
+  #backendState.online .dot { background: var(--ok); }
+  #backendState.offline .dot { background: var(--err); }
+  .btn {
+    border: 1px solid var(--border); background: var(--card); color: var(--text);
+    border-radius: 8px; padding: 6px 14px; font-size: 13px; cursor: pointer;
+    transition: all .15s;
+  }
+  .btn:hover { border-color: var(--primary); color: var(--primary); }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .btn-primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+  .btn-primary:hover:not(:disabled) { background: #1d4ed8; color: #fff; }
+
+  /* ============ 主区域：左对话 + 右过程面板 ============ */
+  main { flex: 1; display: flex; min-height: 0; }
+  .chat { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .panel {
+    width: 320px; border-left: 1px solid var(--border); background: var(--card);
+    display: flex; flex-direction: column; min-height: 0;
+  }
+
+  /* ============ 消息列表 ============ */
+  #messages { flex: 1; overflow-y: auto; padding: 20px; }
+  .empty { text-align: center; padding: 60px 20px; color: var(--text-2); }
+  .empty .icon { font-size: 44px; margin-bottom: 12px; }
+  .empty h2 { font-size: 19px; color: var(--text); margin-bottom: 8px; }
+  .empty p { font-size: 15px; line-height: 1.8; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 20px; }
+  .chip {
+    border: 1px solid var(--border); background: var(--card); border-radius: 999px;
+    padding: 7px 15px; font-size: 13px; color: var(--text); cursor: pointer; transition: all .15s;
+  }
+  .chip:hover { border-color: var(--primary); color: var(--primary); background: var(--primary-light); }
+  .chip .tag { font-size: 11px; color: var(--text-2); margin-left: 4px; }
+
+  .msg { display: flex; margin-bottom: 16px; }
+  .msg.user { justify-content: flex-end; }
+  .msg .avatar {
+    width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center; font-size: 15px;
+    background: var(--primary-light); margin-right: 8px;
+  }
+  .msg.user .avatar { display: none; }
+  .msg .body { max-width: 78%; }
+  .bubble {
+    padding: 11px 15px; border-radius: var(--radius); font-size: 15px; line-height: 1.8;
+    word-break: break-word; white-space: pre-wrap; box-shadow: var(--shadow);
+  }
+  .msg.user .bubble { background: var(--primary); color: #fff; border-bottom-right-radius: 4px; }
+  .msg.assistant .bubble { background: var(--card); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+  .msg.assistant .bubble.error { border-color: var(--err); color: var(--err); }
+  /* 行内 Markdown 元素样式：默认 <strong> 在中文里偏重，收一点字重更好读 */
+  .bubble strong { font-weight: 700; color: var(--text); }
+  .bubble em { font-style: normal; color: var(--primary); }
+  .bubble code {
+    padding: 1px 5px; border-radius: 4px; background: var(--primary-light);
+    color: var(--primary); font-size: 13px;
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  }
+  .bubble sup.cite {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 16px; height: 16px; padding: 0 3px; margin: 0 2px;
+    border-radius: 4px; background: var(--primary-light); color: var(--primary);
+    font-size: 11px; cursor: pointer; vertical-align: super; line-height: 1;
+    border: 1px solid #bfdbfe; transition: all .15s; user-select: none;
+  }
+  .bubble sup.cite:hover { background: var(--primary); color: #fff; }
+  .bubble sup.cite.flash { background: var(--warn); color: #fff; border-color: var(--warn); }
+
+  /* 输入区 */
+  .composer {
+    display: flex; gap: 10px; padding: 14px 20px; background: var(--card);
+    border-top: 1px solid var(--border); align-items: flex-end;
+  }
+  #input {
+    flex: 1; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
+    font-size: 15px; font-family: inherit; resize: none; outline: none;
+    max-height: 120px; line-height: 1.6; transition: border-color .15s;
+  }
+  #input:focus { border-color: var(--primary); }
+  #sendBtn { padding: 10px 22px; flex-shrink: 0; }
+
+  /* ============ 右侧过程面板（Adaptive 可观察性） ============ */
+  .panel-head {
+    padding: 14px 16px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .panel-head h2 { font-size: 14px; font-weight: 600; color: var(--text-2); letter-spacing: .5px; }
+  #routeBadge {
+    font-size: 12px; padding: 3px 10px; border-radius: 999px; font-weight: 600;
+    background: #f3f4f6; color: var(--text-2); transition: all .2s;
+  }
+  #process { flex: 1; overflow-y: auto; padding: 14px 16px; font-size: 13px; }
+  .process-empty { color: var(--text-2); line-height: 1.9; text-align: center; padding-top: 40px; }
+  .p-block { margin-bottom: 14px; animation: fadeIn .25s ease; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+  .p-title { font-size: 12px; color: var(--text-2); margin-bottom: 6px; font-weight: 600; }
+  .p-card {
+    border: 1px solid var(--border); border-radius: 8px; padding: 9px 12px;
+    background: #fafafa; line-height: 1.75;
+  }
+  .p-card.ok { border-color: #a7f3d0; background: #ecfdf5; }
+  .p-card.err { border-color: #fecaca; background: #fef2f2; }
+  .p-card.warn { border-color: #fde68a; background: #fffbeb; }
+  .p-card .q { color: var(--text); }
+  .p-meta { color: var(--text-2); font-size: 12px; margin-top: 3px; }
+  .badge-ok { color: var(--ok); font-weight: 700; }
+  .badge-err { color: var(--err); font-weight: 700; }
+  .badge-warn { color: var(--warn); font-weight: 700; }
+  .p-sub { padding-left: 14px; border-left: 2px solid var(--border); margin: 6px 0 6px 4px; }
+
+  /* 引用卡片 */
+  .cite-card {
+    border: 1px solid var(--border); border-radius: 8px; padding: 9px 12px;
+    margin-bottom: 6px; cursor: pointer; background: #fafafa; transition: all .15s;
+  }
+  .cite-card:hover, .cite-card.active { border-color: var(--primary); background: var(--primary-light); }
+  .cite-card .head { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); }
+  .cite-card .idx {
+    background: var(--primary); color: #fff; border-radius: 4px;
+    min-width: 16px; height: 16px; display: inline-flex; align-items: center;
+    justify-content: center; font-size: 11px; padding: 0 3px;
+  }
+  .cite-card .text { font-size: 13px; color: var(--text); margin-top: 4px; line-height: 1.65; }
+
+  details.trace { margin-top: 4px; }
+  details.trace summary { cursor: pointer; color: var(--text-2); font-size: 12px; }
+  details.trace pre {
+    background: #f9fafb; border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px; font-size: 11px; overflow-x: auto; margin-top: 6px; line-height: 1.5;
+  }
+
+  /* ============ 响应式：窄屏时过程面板收成下方横条 ============ */
+  @media (max-width: 860px) {
+    main { flex-direction: column; }
+    .panel { width: 100%; border-left: none; border-top: 1px solid var(--border); max-height: 40vh; }
+    .msg .body { max-width: 88%; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand">
+      <span class="logo">🛍️</span>
+      <h1>Adaptive-RAG 电商客服</h1>
+      <span class="sub">Router 五分类 · 混合检索 · 引用溯源 · 低置信拒答</span>
+    </div>
+    <div class="actions">
+      <span id="backendState"><span class="dot"></span><span id="backendText">检测中…</span></span>
+      <button class="btn" id="clearBtn">清空对话</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- 左：对话区 -->
+    <section class="chat">
+      <div id="messages">
+        <div class="empty" id="emptyState">
+          <div class="icon">🤖</div>
+          <h2>你好，我是电商智能客服</h2>
+          <p>我会先判断问题的类型，再决定怎么回答：<br>
+             简单问题直接答，业务知识查资料，复杂问题拆开查，越界问题转人工。</p>
+          <div class="chips" id="chips">
+            <!-- 五个示例恰好覆盖 A-E 五类路由，是演示 Adaptive 机制的最佳素材 -->
+            <button class="chip" data-q="在吗">在吗<span class="tag">A 寒暄</span></button>
+            <button class="chip" data-q="多少包邮">多少包邮<span class="tag">B FAQ</span></button>
+            <button class="chip" data-q="退货运费谁承担">退货运费谁承担<span class="tag">C 单跳</span></button>
+            <button class="chip" data-q="订单还没到，退货的话运费谁出">订单还没到，退货的话运费谁出<span class="tag">D 多跳</span></button>
+            <button class="chip" data-q="帮我把订单价格改成1元">帮我把订单价格改成1元<span class="tag">E 越界</span></button>
+          </div>
+        </div>
+      </div>
+      <div class="composer">
+        <textarea id="input" rows="1" placeholder="输入问题，Enter 发送，Shift+Enter 换行"></textarea>
+        <button class="btn btn-primary" id="sendBtn">发送</button>
+      </div>
+    </section>
+
+    <!-- 右：处理过程面板（把 trace 实时可视化） -->
+    <aside class="panel">
+      <div class="panel-head">
+        <h2>⚙️ 处理过程</h2>
+        <span id="routeBadge">待分类</span>
+      </div>
+      <div id="process">
+        <div class="process-empty" id="processEmpty">
+          发送问题后，这里会实时展示：<br>意图分类 → 检索轮次 → 精排分数 → 引用溯源<br><br>
+          重试和拒答过程对你可见——<br>这是可信度的重要组成部分。
+        </div>
+      </div>
+    </aside>
+  </main>
+</div>
+
+<script>
+"use strict";
+// ============================================================
+// 0. 基础引用与全局状态
+// ============================================================
+const $ = (id) => document.getElementById(id);
+const messagesEl = $("messages"), inputEl = $("input"), sendBtn = $("sendBtn");
+const processEl = $("process"), routeBadge = $("routeBadge");
+
+// 全局状态：history 是多轮指代消解的关键输入（Query Rewrite 消费它），
+// busy 防止流式响应期间重复发送
+const state = { history: [], busy: false };
+
+// 后端地址：由 FastAPI 托管（http/https）时用同源相对路径；
+// 直接双击打开文件（file://）时回退到本地服务地址。
+const API_BASE = /^https?:$/.test(location.protocol) ? "" : "http://127.0.0.1:8000";
+
+// 五类路由的展示元数据（与后端 ROUTER_PROMPT 的类别定义一一对应）
+const ROUTE_META = {
+  A: { label: "A · 寒暄/常识", color: "#6b7280", bg: "#f3f4f6" },
+  B: { label: "B · FAQ 命中", color: "#059669", bg: "#ecfdf5" },
+  C: { label: "C · 单跳知识", color: "#2563eb", bg: "#eff6ff" },
+  D: { label: "D · 复合多跳", color: "#7c3aed", bg: "#f5f3ff" },
+  E: { label: "E · 越界/敏感", color: "#dc2626", bg: "#fef2f2" },
+};
+
+// 拒答原因 → 中文说明（与后端 REFUSE_REPLIES 的 key 对应）
+const REFUSE_META = {
+  low_confidence: "检索层低置信：多轮检索证据均不足",
+  verify_failed: "生成层校验失败：答案未被证据支撑",
+  out_of_scope: "越界/敏感：超出知识库处理权限",
+  rewrite_failed: "改写器故障：无法生成有效检索 query",
+};
+
+// ============================================================
+// 1. 工具函数
+// ============================================================
+
+// HTML 转义——【安全要点】LLM 输出与用户输入都不可信，
+// 任何拼接到 innerHTML 的文本必须先过这里，否则就是 XSS 入口
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
+}
+
+// 轻量 Markdown 渲染——【求职考点】为什么自己写而不用 marked.js
+//   1. 需要渲染的只有三种行内语法（**粗体**、*斜体*、`代码`），
+//      引入一个 40KB 的库来干三行正则的事，属于典型的过度选型
+//   2. 顺序不能反：必须先 escapeHtml 再插标签。
+//      如果先渲染再转义，自己生成的 <strong> 会被转成 &lt;strong&gt;
+//      直接显示成标签源码；反过来则是安全的，因为转义后文本里已无 < >
+//   3. 正则用 [^*\n]+? 而不是 [\s\S]+?：禁止跨行匹配，
+//      否则模型偶尔漏一个 ** 就会把后面半篇答案全吞进粗体
+//   4. 换行不转 <br>：.bubble 已设 white-space: pre-wrap，交给 CSS 处理，
+//      避免 <br> 与 pre-wrap 叠加导致行距翻倍
+function renderMarkdown(escaped) {
+  let html = escaped
+    .replace(/\*\*([^*\n]+?)\*\*/g, "<strong>$1</strong>")   // **粗体**
+    .replace(/(^|[^*])\*([^*\n]+?)\*(?!\*)/g, "$1<em>$2</em>") // *斜体*（前后无 * 才算）
+    .replace(/`([^`\n]+?)`/g, "<code>$1</code>");           // `行内代码`
+  // 兜底：模型漏配对时残留的 ** 会原样显示给用户，比少一个粗体更难看，直接清掉
+  return html.replace(/\*\*/g, "");
+}
+
+// 后端健康探测：页面加载时确认服务在不在，不在就明确提示，
+// 而不是让用户点了发送才看到连接失败
+async function checkHealth() {
+  const el = $("backendState"), text = $("backendText");
+  try {
+    const r = await fetch(`${API_BASE}/health`);
+    el.className = r.ok ? "online" : "offline";
+    text.textContent = r.ok ? "服务正常" : "服务异常";
+  } catch {
+    el.className = "offline";
+    text.textContent = "后端未启动";
+  }
+}
+
+// 输入框自适应高度（1~5 行）
+function autoGrow() {
+  inputEl.style.height = "auto";
+  inputEl.style.height = Math.min(inputEl.scrollHeight, 120) + "px";
+}
+
+// ============================================================
+// 2. 消息渲染
+// ============================================================
+
+function appendUserMsg(text) {
+  $("emptyState")?.remove();
+  const div = document.createElement("div");
+  div.className = "msg user";
+  div.innerHTML = `<div class="body"><div class="bubble"></div></div>`;
+  // 用户输入用 textContent 而非 innerHTML——同样遵循"不可信输入"原则
+  div.querySelector(".bubble").textContent = text;
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+// 创建助手消息骨架，返回操作句柄。
+// 流式期间只往 buffer 里追加纯文本（textContent 展示）；
+// 流结束后才做引用高亮渲染——因为分片可能把 "[1]" 切成两半
+function createAssistantMsg() {
+  $("emptyState")?.remove();
+  const div = document.createElement("div");
+  div.className = "msg assistant";
+  div.innerHTML = `
+    <div class="avatar">🤖</div>
+    <div class="body">
+      <div class="bubble"><span class="thinking">思考中…</span></div>
+      <div class="cite-row"></div>
+    </div>`;
+  messagesEl.appendChild(div);
+  const bubble = div.querySelector(".bubble");
+  const handle = {
+    el: div,
+    text: "",
+    setText(t) { this.text = t; bubble.textContent = t; messagesEl.scrollTop = messagesEl.scrollHeight; },
+    markError(t) { bubble.classList.add("error"); bubble.textContent = t; },
+    // 流结束后的最终渲染：转义 → Markdown 行内样式 → [n] 替换为可点击 sup
+    finalize(citations, used) {
+      let html = renderMarkdown(escapeHtml(this.text));
+      html = html.replace(/\[(\d+)\]/g, (m, n) => {
+        const on = !used || used.includes(+n);
+        return `<sup class="cite" data-idx="${n}" style="${on ? "" : "opacity:.4"}">${n}</sup>`;
+      });
+      bubble.innerHTML = html;
+      bubble.querySelectorAll("sup.cite").forEach((sup) => {
+        sup.addEventListener("click", () => {
+          const idx = sup.dataset.idx;
+          const card = processEl.querySelector(`.cite-card[data-idx="${idx}"]`);
+          if (card) { card.scrollIntoView({ behavior: "smooth", block: "nearest" }); flashCard(card); }
+        });
+      });
+    },
+  };
+  return handle;
+}
+
+function flashCard(card) {
+  card.classList.add("active");
+  setTimeout(() => card.classList.remove("active"), 1200);
+}
+
+// ============================================================
+// 3. 过程面板渲染（trace 可视化——Adaptive 可观察性的核心）
+// ============================================================
+
+function resetPanel() {
+  processEl.innerHTML = "";
+}
+
+function addBlock(title, cardHtml, cardClass) {
+  const block = document.createElement("div");
+  block.className = "p-block";
+  block.innerHTML = `<div class="p-title">${escapeHtml(title)}</div><div class="p-card ${cardClass || ""}">${cardHtml}</div>`;
+  processEl.appendChild(block);
+  return block;
+}
+
+function renderRoute(route) {
+  const key = (route || "C")[0];           // "C(fallback_from_B)" 取首字母
+  const meta = ROUTE_META[key] || ROUTE_META.C;
+  routeBadge.textContent = meta.label;
+  routeBadge.style.background = meta.bg;
+  routeBadge.style.color = meta.color;
+  addBlock("① 意图分类（Router Agent）",
+    `<span class="q">${escapeHtml(route)}</span>
+     <div class="p-meta">${escapeHtml(routeDesc(key))}</div>`);
+}
+
+function routeDesc(key) {
+  return {
+    A: "直接回答，不调用检索（省时延）",
+    B: "FAQ 语义命中则直出标准答案",
+    C: "双路召回 → RRF 融合 → 精排 → 生成 → 校验",
+    D: "拆解子问题 → 分头检索 → 合并证据 → 统一精排",
+    E: "合规兜底：拒答并引导人工客服",
+  }[key] || "";
+}
+
+function renderFAQ(hit) {
+  addBlock("② FAQ 命中（B 类直出）",
+    `<span class="q">${escapeHtml(hit.question)}</span>
+     <div class="p-meta">语义相似度 ${hit.score} ≥ 阈值 · 未调用检索与生成</div>`, "ok");
+}
+
+function renderDecompose(subs) {
+  const items = subs.map((s) => `<div class="p-sub q">${escapeHtml(s)}</div>`).join("");
+  addBlock("② 问题拆解（D 类多跳）", items, "ok");
+}
+
+function renderRound(rnd) {
+  const passed = rnd.passed;
+  const cls = passed ? "ok" : (rnd.degraded ? "warn" : "err");
+  const mark = passed ? `<span class="badge-ok">✓ 通过</span>`
+                      : (rnd.degraded ? `<span class="badge-warn">⚠ 降级放行</span>`
+                                      : `<span class="badge-err">✗ 未过</span>`);
+  const score = (rnd.top1_score == null) ? "—" : Number(rnd.top1_score).toFixed(3);
+  addBlock(`第 ${rnd.round} 轮检索`,
+    `<div><span class="q">${escapeHtml(rnd.query || "")}</span></div>
+     <div class="p-meta">候选 ${rnd.candidate_count ?? "—"} 篇 · 精排 top1 = ${score} · ${mark}</div>`, cls);
+}
+
+function renderCitations(citations, used) {
+  const cards = citations.map((c) => `
+    <div class="cite-card" data-idx="${c.index}">
+      <div class="head">
+        <span class="idx">${c.index}</span>
+        <span>文档 ${escapeHtml(String(c.doc_id))} · chunk ${escapeHtml(String(c.chunk_id))}</span>
+        ${c.rerank_score != null ? `<span style="margin-left:auto">精排 ${Number(c.rerank_score).toFixed(3)}</span>` : ""}
+      </div>
+      <div class="text">${escapeHtml(c.text || "")}</div>
+    </div>`).join("");
+  const block = addBlock("引用溯源（点击可定位回答中位置）", cards);
+  block.querySelectorAll(".cite-card").forEach((card) => {
+    card.addEventListener("click", () => {
+      const idx = card.dataset.idx;
+      const sup = messagesEl.querySelector(`sup.cite[data-idx="${idx}"]`);
+      if (sup) {
+        sup.scrollIntoView({ behavior: "smooth", block: "center" });
+        sup.classList.add("flash");
+        setTimeout(() => sup.classList.remove("flash"), 1200);
+      }
+    });
+  });
+}
+
+function renderRefused(reason, answer) {
+  addBlock("拒答（不编造，转人工）",
+    `<div><span class="badge-err">${escapeHtml(REFUSE_META[reason] || reason)}</span></div>
+     <div class="p-meta" style="margin-top:6px">${escapeHtml(answer)}</div>`, "err");
+}
+
+function renderVerify(verify) {
+  if (!verify) return;
+  const ok = verify.passed;
+  addBlock("④ Critic 溯源校验",
+    `<span class="${ok ? "badge-ok" : "badge-err"}">${ok ? "✓ 通过" : "✗ 未通过"}</span>
+     <div class="p-meta">${escapeHtml(verify.reason || "")}${verify.degraded ? "（审核器降级放行）" : ""}</div>`,
+    ok ? "ok" : "err");
+}
+
+function renderTrace(trace) {
+  const block = document.createElement("div");
+  block.className = "p-block";
+  block.innerHTML = `
+    <details class="trace">
+      <summary>查看完整 trace（调试数据）</summary>
+      <pre>${escapeHtml(JSON.stringify(trace, null, 2))}</pre>
+    </details>`;
+  processEl.appendChild(block);
+}
+
+// ============================================================
+// 4. SSE 消费（本页面最核心的一段）
+// ============================================================
+
+async function consumeSSE(query) {
+  // ---- fetch 发起 POST，拿 ReadableStream ----
+  // 【求职考点】为什么不用 EventSource：它只支持 GET。
+  // 我们的接口需要 POST + JSON body（query + history），浏览器没有
+  // "POST 版 EventSource"，只能 fetch 后手工按协议切事件
+  const resp = await fetch(`${API_BASE}/agent/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query, history: state.history }),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.detail || `HTTP ${resp.status}`);
+  }
+
+  // ---- 流式读取 + 手工切事件 ----
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";                 // 字节→文本的累积缓冲：一个事件的 data 可能跨 chunk 到达
+  const assistant = createAssistantMsg();
+  let trace = null, refused = false;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+
+    // SSE 协议：一个完整事件以空行 "\n\n" 结尾——按它切分
+    let idx;
+    while ((idx = buf.indexOf("\n\n")) !== -1) {
+      const raw = buf.slice(0, idx);
+      buf = buf.slice(idx + 2);
+      const evt = raw.match(/event:\s*(\w+)/);
+      const dat = raw.match(/data:\s*(.*)/);   // 我们约定 data 是单行 JSON
+      if (!evt || !dat) continue;              // 心跳/注释行直接跳过
+      const type = evt[1];
+      const data = JSON.parse(dat[1] || "{}");
+
+      // ---- 事件分发 ----
+      switch (type) {
+        case "start":
+          resetPanel();
+          break;
+        case "route":
+          renderRoute(data.route);
+          break;
+        case "faq":
+          renderFAQ(data);
+          break;
+        case "decompose":
+          renderDecompose(data.sub_questions || []);
+          break;
+        case "round":
+          renderRound(data);
+          break;
+        case "answer_start":
+          assistant.setText("");
+          break;
+        case "chunk":
+          // 分片追加。注意：只碰纯文本 buffer，不做任何 HTML 解析——
+          // 否则 "[1]" 被切成两半时替换会漏；高亮统一在 finalize 做
+          assistant.setText(assistant.text + (data.text || ""));
+          break;
+        case "citations":
+          renderCitations(data.citations || [], data.used_citations || []);
+          assistant.finalize(data.citations || [], data.used_citations || []);
+          break;
+        case "refused":
+          refused = true;
+          renderRefused(data.reason, data.answer);
+          assistant.setText(data.answer);
+          break;
+        case "error":
+          assistant.markError("⚠️ " + (data.message || "服务内部错误"));
+          break;
+        case "done":
+          trace = data;
+          break;
+      }
+    }
+  }
+
+  // ---- 收尾：写入多轮历史（拒答话术也入历史——这样用户追问"那怎么办"时有上下文）----
+  const finalText = assistant.text;
+  if (finalText && !assistant.el.querySelector(".bubble").classList.contains("error")) {
+    state.history.push({ role: "user", content: query });
+    state.history.push({ role: "assistant", content: finalText });
+  }
+  renderVerify(trace && trace.verify ? trace.verify : null);
+  if (trace) {
+    const detail = trace.route ? `共 ${trace.rounds ?? 0} 轮检索` : "";
+    addBlock("⑤ 完成", `<span class="p-meta">${escapeHtml(detail)}</span>`);
+  }
+  return { refused };
+}
+
+// ============================================================
+// 5. 发送入口
+// ============================================================
+
+async function send(text) {
+  const query = (text ?? inputEl.value).trim();
+  if (!query || state.busy) return;
+  state.busy = true;
+  sendBtn.disabled = true;
+  sendBtn.textContent = "生成中…";
+  inputEl.value = "";
+  autoGrow();
+  appendUserMsg(query);
+  resetPanel();
+
+  try {
+    await consumeSSE(query);
+  } catch (e) {
+    // 连接层错误（后端没起/网络断）——在对话区给明确反馈，
+    // 而不是静默失败让用户干等
+    const div = document.createElement("div");
+    div.className = "msg assistant";
+    div.innerHTML = `<div class="avatar">🤖</div><div class="body">
+      <div class="bubble error"></div></div>`;
+    div.querySelector(".bubble").textContent = "⚠️ 无法连接到服务：" + e.message +
+      "（请确认后端已启动：python main.py）";
+    messagesEl.appendChild(div);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  } finally {
+    state.busy = false;
+    sendBtn.disabled = false;
+    sendBtn.textContent = "发送";
+    inputEl.focus();
+  }
+}
+
+// ============================================================
+// 6. 事件绑定
+// ============================================================
+
+sendBtn.addEventListener("click", () => send());
+inputEl.addEventListener("input", autoGrow);
+inputEl.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {   // Enter 发送，Shift+Enter 换行
+    e.preventDefault();
+    send();
+  }
+});
+$("clearBtn").addEventListener("click", () => {
+  state.history = [];
+  messagesEl.innerHTML = `
+    <div class="empty" id="emptyState">
+      <div class="icon">🤖</div>
+      <h2>你好，我是电商智能客服</h2>
+      <p>我会先判断问题的类型，再决定怎么回答。</p>
+    </div>`;
+  resetPanel();
+  routeBadge.textContent = "待分类";
+  routeBadge.style.background = "#f3f4f6";
+  routeBadge.style.color = "#6b7280";
+  inputEl.focus();
+});
+// 示例问题 chips：点击即发送（覆盖 A-E 五类，演示路由分治）
+$("chips").addEventListener("click", (e) => {
+  const chip = e.target.closest(".chip");
+  if (chip) send(chip.dataset.q);
+});
+
+// 初始化
+checkHealth();
+inputEl.focus();
+</script>
+</body>
+</html>

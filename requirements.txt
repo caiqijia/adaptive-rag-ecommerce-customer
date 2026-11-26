@@ -1,0 +1,36 @@
+# Adaptive-RAG 电商客服系统 —— 运行依赖
+# 安装：pip install -r requirements.txt
+# 版本为实测通过版本（Windows + Python 3.11）。用 `>=` 而非 `==`：
+# 这类项目的主要风险来自"装不上"，不是"版本漂移"，锁死会提高新环境的失败率。
+# 若要做可复现实验，请用 pip freeze > requirements.lock.txt 另存一份锁定版。
+
+# ---- Web 框架 ----
+fastapi>=0.110          # 0.153.0 实测；0.100+ 才支持 lifespan（本项目用 lifespan 而非 on_event）
+uvicorn>=0.29           # 0.54.0 实测
+python-multipart>=0.0.9 # ⚠️ 必需：FastAPI 的 File()/UploadFile 依赖它，缺了启动即报
+                        #    "Form data requires python-multipart to be installed"
+
+# ---- 数据层 ----
+tortoise-orm>=0.20      # 1.1.9 实测
+aiosqlite>=0.19         # 0.22.1 实测（Tortoise 的 SQLite 异步驱动）
+pydantic>=2.0           # 2.14.1 实测（Tortoise 的 pydantic_model 需要 v2）
+
+# ---- 向量检索 ----
+chromadb>=0.4           # 1.5.9 实测（内置 PersistentClient，无需单独起服务）
+dashscope>=1.20         # 1.27.8 实测（只用于 TextEmbedding；LLM 走标准库 urllib 直调）
+
+# ---- 关键词检索 ----
+rank-bm25>=0.2.2        # BM25Okapi
+jieba>=0.42             # 中文分词，BM25 的前置
+
+# ---- 精排（cross-encoder）----
+# ⚠️ 这个包会连带安装 torch（CPU 版约 200MB）。模型权重（bge-reranker-v2-m3 约 2.2GB）
+#    不在本依赖内，需单独下载到 local_models/，见 config.py 与 README。
+FlagEmbedding>=1.2      # 1.4.2 实测
+
+# ---- 文档解析 ----
+PyPDF2>=3.0             # 3.0.1 实测；⚠️ 必需，缺失时 /doc/upload_pdf 会在 parse_pdf 处崩
+
+# ---- 其他 ----
+aiofiles>=23.0          # 异步文件写入（上传落盘）
+python-dotenv>=1.0      # 1.2.4 实测；config.py 用它读取 .env（可选，未装则回落到系统环境变量）

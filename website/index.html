@@ -1,0 +1,1319 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Adaptive-RAG 电商客服系统 · 先判断，再检索</title>
+<meta name="description" content="基于 Adaptive-RAG 思想的多智能体电商客服问答系统：Router 五分类分治、BM25 + 向量混合检索、RRF 融合、BGE 精排、双拒答防线。">
+<style>
+  :root{
+    --primary:#2563eb;
+    --primary-dark:#1d4ed8;
+    --primary-light:#eff6ff;
+    --cyan:#0891b2;
+    --ok:#059669;
+    --warn:#d97706;
+    --err:#dc2626;
+    --violet:#7c3aed;
+    --bg:#f6f8fc;
+    --card:#ffffff;
+    --ink:#0f172a;
+    --ink-2:#475569;
+    --ink-3:#94a3b8;
+    --line:#e2e8f0;
+    --radius:16px;
+    --shadow-sm:0 1px 2px rgba(15,23,42,.05);
+    --shadow:0 4px 16px rgba(15,23,42,.06);
+    --shadow-lg:0 18px 48px rgba(15,23,42,.10);
+    --mono:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    background:var(--bg);color:var(--ink);line-height:1.7;
+    -webkit-font-smoothing:antialiased;
+  }
+  a{color:inherit;text-decoration:none}
+  .wrap{max-width:1120px;margin:0 auto;padding:0 24px}
+
+  /* ================= 导航 ================= */
+  header.nav{
+    position:sticky;top:0;z-index:50;background:rgba(255,255,255,.82);
+    backdrop-filter:blur(14px);border-bottom:1px solid rgba(226,232,240,.8);
+  }
+  .nav-inner{display:flex;align-items:center;justify-content:space-between;height:64px}
+  .logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:16px;letter-spacing:.2px}
+  .logo-mark{
+    width:30px;height:30px;border-radius:9px;
+    background:linear-gradient(135deg,var(--primary),var(--cyan));
+    display:grid;place-items:center;color:#fff;font-size:14px;font-weight:800;
+    box-shadow:0 4px 12px rgba(37,99,235,.3);
+  }
+  .logo span{color:var(--ink-3);font-weight:500;font-size:13px;margin-left:2px}
+  nav.links{display:flex;gap:4px}
+  nav.links a{
+    font-size:14px;color:var(--ink-2);padding:7px 12px;border-radius:8px;transition:.18s;
+  }
+  nav.links a:hover{color:var(--primary);background:var(--primary-light)}
+  .nav-cta{
+    font-size:13px;font-weight:600;color:#fff;background:var(--primary);
+    padding:8px 16px;border-radius:9px;transition:.18s;box-shadow:0 4px 12px rgba(37,99,235,.25)
+  }
+  .nav-cta:hover{background:var(--primary-dark);transform:translateY(-1px)}
+  .menu-btn{display:none;border:1px solid var(--line);background:#fff;border-radius:8px;padding:6px 10px;cursor:pointer}
+
+  /* ================= Hero ================= */
+  .hero{position:relative;overflow:hidden;padding:88px 0 72px}
+  .hero::before{
+    content:"";position:absolute;inset:0;z-index:-2;
+    background:
+      radial-gradient(900px 420px at 15% -10%,rgba(37,99,235,.14),transparent 60%),
+      radial-gradient(700px 380px at 88% 0%,rgba(8,145,178,.13),transparent 60%);
+  }
+  .hero::after{
+    content:"";position:absolute;inset:0;z-index:-1;opacity:.5;
+    background-image:linear-gradient(rgba(15,23,42,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(15,23,42,.045) 1px,transparent 1px);
+    background-size:44px 44px;
+    mask-image:radial-gradient(ellipse 80% 60% at 50% 0%,#000 30%,transparent 78%);
+    -webkit-mask-image:radial-gradient(ellipse 80% 60% at 50% 0%,#000 30%,transparent 78%);
+  }
+  .hero-grid{display:grid;grid-template-columns:1.12fr .88fr;gap:56px;align-items:center}
+  .pill{
+    display:inline-flex;align-items:center;gap:8px;font-size:12.5px;color:var(--primary);
+    background:var(--primary-light);border:1px solid rgba(37,99,235,.18);
+    padding:5px 12px;border-radius:999px;font-weight:600;margin-bottom:22px;
+  }
+  .pill i{width:6px;height:6px;border-radius:50%;background:var(--primary);box-shadow:0 0 0 3px rgba(37,99,235,.15)}
+  h1.title{
+    font-size:clamp(34px,4.4vw,54px);line-height:1.16;letter-spacing:-1.2px;font-weight:800;
+  }
+  h1.title em{
+    font-style:normal;
+    background:linear-gradient(100deg,var(--primary),var(--cyan) 60%,var(--violet));
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+  }
+  .lede{margin-top:20px;font-size:17px;color:var(--ink-2);max-width:560px}
+  .lede b{color:var(--ink);font-weight:600}
+  .hero-actions{display:flex;gap:12px;margin-top:30px;flex-wrap:wrap}
+  .btn{
+    display:inline-flex;align-items:center;gap:8px;font-size:14.5px;font-weight:600;
+    padding:11px 22px;border-radius:10px;border:1px solid transparent;transition:.18s;cursor:pointer;
+  }
+  .btn-main{background:var(--primary);color:#fff;box-shadow:0 8px 20px rgba(37,99,235,.28)}
+  .btn-main:hover{background:var(--primary-dark);transform:translateY(-2px)}
+  .btn-ghost{background:#fff;color:var(--ink);border-color:var(--line);box-shadow:var(--shadow-sm)}
+  .btn-ghost:hover{border-color:var(--primary);color:var(--primary);transform:translateY(-2px)}
+  .stack{margin-top:34px;display:flex;flex-wrap:wrap;gap:8px}
+  .tag{
+    font-size:12px;font-family:var(--mono);color:var(--ink-2);background:#fff;
+    border:1px solid var(--line);padding:4px 10px;border-radius:6px;box-shadow:var(--shadow-sm);
+  }
+
+  /* Hero 右侧：路由示意卡 */
+  .route-card{
+    background:rgba(255,255,255,.86);border:1px solid rgba(226,232,240,.9);
+    border-radius:20px;box-shadow:var(--shadow-lg);padding:20px;backdrop-filter:blur(8px);
+  }
+  .route-card .rc-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+  .rc-head .rc-title{font-size:12.5px;font-weight:700;color:var(--ink-2);letter-spacing:.4px}
+  .rc-head .rc-dot{display:flex;gap:5px}
+  .rc-dot i{width:8px;height:8px;border-radius:50%;background:#e2e8f0}
+  .rc-dot i:nth-child(1){background:#fca5a5}
+  .rc-dot i:nth-child(2){background:#fcd34d}
+  .rc-dot i:nth-child(3){background:#86efac}
+  .q-bubble{
+    background:var(--primary-light);border:1px solid rgba(37,99,235,.15);
+    color:var(--primary-dark);font-size:13.5px;font-weight:600;
+    padding:10px 13px;border-radius:12px 12px 12px 4px;margin-bottom:16px;
+  }
+  .route-list{display:flex;flex-direction:column;gap:8px;position:relative}
+  .route-list::before{
+    content:"";position:absolute;left:15px;top:14px;bottom:14px;width:2px;
+    background:linear-gradient(var(--primary),var(--cyan));opacity:.18;
+  }
+  .route-row{display:flex;align-items:center;gap:11px;position:relative;z-index:1}
+  .r-dot{
+    width:30px;height:30px;border-radius:9px;display:grid;place-items:center;
+    font-size:12px;font-weight:800;background:#fff;border:1.5px solid var(--line);color:var(--ink-3);flex:none;
+  }
+  .route-row.on .r-dot{background:var(--primary);border-color:var(--primary);color:#fff;box-shadow:0 4px 12px rgba(37,99,235,.35)}
+  .r-label{font-size:13px;color:var(--ink-3)}
+  .r-label b{color:var(--ink);font-weight:600}
+  .route-row.on .r-label{color:var(--primary-dark)}
+  .r-cost{margin-left:auto;font-size:11px;font-family:var(--mono);color:var(--ink-3);background:#f1f5f9;padding:2px 8px;border-radius:5px}
+  .route-row.on .r-cost{background:rgba(37,99,235,.1);color:var(--primary)}
+
+  /* ================= 概览指标 ================= */
+  .metrics{border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:#fff}
+  .metrics-inner{display:grid;grid-template-columns:repeat(4,1fr);gap:0}
+  .metric{padding:26px 18px;text-align:center;border-left:1px solid var(--line)}
+  .metric:first-child{border-left:none}
+  .metric .num{font-size:30px;font-weight:800;letter-spacing:-.5px;color:var(--ink)}
+  .metric .num small{font-size:15px;font-weight:700;color:var(--primary);margin-left:2px}
+  .metric .lbl{font-size:12.5px;color:var(--ink-3);margin-top:2px}
+
+  /* ================= 通用区块 ================= */
+  section{padding:84px 0}
+  .sec-head{max-width:720px;margin-bottom:44px}
+  .kicker{
+    display:inline-block;font-size:12px;font-weight:700;letter-spacing:1.4px;
+    color:var(--primary);text-transform:uppercase;margin-bottom:12px;
+  }
+  h2{font-size:clamp(25px,3vw,34px);line-height:1.3;letter-spacing:-.6px;font-weight:800}
+  .sec-head p{margin-top:14px;color:var(--ink-2);font-size:15.5px}
+
+  .reveal{opacity:0;transform:translateY(18px);transition:opacity .6s ease,transform .6s ease}
+  .reveal.in{opacity:1;transform:none}
+
+  /* 对比：固定流水线 vs 自适应 */
+  .compare{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+  .cmp-card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:26px;box-shadow:var(--shadow-sm)}
+  .cmp-card h3{font-size:16px;display:flex;align-items:center;gap:9px;margin-bottom:14px}
+  .cmp-badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:5px}
+  .cmp-card.old .cmp-badge{background:#fef2f2;color:var(--err)}
+  .cmp-card.new{border-color:rgba(37,99,235,.35);box-shadow:0 10px 30px rgba(37,99,235,.10)}
+  .cmp-card.new .cmp-badge{background:var(--primary-light);color:var(--primary)}
+  .cmp-card ul{list-style:none;display:flex;flex-direction:column;gap:10px}
+  .cmp-card li{font-size:14px;color:var(--ink-2);padding-left:24px;position:relative}
+  .cmp-card li::before{
+    content:"";position:absolute;left:0;top:7px;width:14px;height:14px;border-radius:50%;
+    background:center/8px no-repeat;
+  }
+  .cmp-card.old li::before{background-color:#fef2f2;border:1px solid #fecaca}
+  .cmp-card.new li::before{background-color:var(--primary-light);border:1px solid rgba(37,99,235,.3)}
+  .cmp-card li b{color:var(--ink);font-weight:600}
+
+  /* Router 卡片 */
+  .router-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+  .r-card{
+    background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px;
+    box-shadow:var(--shadow-sm);transition:.22s;position:relative;overflow:hidden;
+  }
+  .r-card::after{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--accent,var(--primary));opacity:.85}
+  .r-card:hover{transform:translateY(-4px);box-shadow:var(--shadow)}
+  .r-top{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+  .r-code{
+    width:28px;height:28px;border-radius:8px;display:grid;place-items:center;
+    font-size:12.5px;font-weight:800;color:#fff;background:var(--accent,var(--primary));
+  }
+  .r-name{font-size:15px;font-weight:700}
+  .r-example{font-size:12.5px;font-family:var(--mono);color:var(--ink-3);background:#f8fafc;border:1px solid var(--line);border-radius:7px;padding:6px 9px;margin-bottom:10px;word-break:break-all}
+  .r-path{font-size:13.5px;color:var(--ink-2)}
+  .r-path span{color:var(--accent,var(--primary));font-weight:600}
+  .r-why{font-size:12.5px;color:var(--ink-3);margin-top:9px;padding-top:9px;border-top:1px dashed var(--line)}
+
+  /* 链路 */
+  .pipeline{
+    background:#0b1220;border-radius:20px;padding:34px 30px;color:#e2e8f0;
+    box-shadow:var(--shadow-lg);position:relative;overflow:hidden;margin-top:8px;
+  }
+  .pipeline::before{
+    content:"";position:absolute;inset:0;
+    background:radial-gradient(600px 220px at 20% 0%,rgba(37,99,235,.25),transparent 65%),
+               radial-gradient(500px 200px at 90% 100%,rgba(8,145,178,.18),transparent 65%);
+  }
+  .pipe-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:24px;position:relative}
+  .pipe-head h3{font-size:16px;font-weight:700;letter-spacing:.2px}
+  .pipe-head span{font-size:11.5px;font-family:var(--mono);color:#7dd3fc;background:rgba(14,116,144,.25);border:1px solid rgba(125,211,252,.25);padding:3px 9px;border-radius:5px}
+  .pipe-flow{display:flex;align-items:stretch;gap:10px;flex-wrap:wrap;position:relative}
+  .pipe-step{
+    flex:1 1 150px;background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.09);
+    border-radius:11px;padding:13px 12px;position:relative;min-width:140px;
+  }
+  .pipe-step .ps-idx{font-size:10.5px;font-family:var(--mono);color:#64748b}
+  .pipe-step .ps-name{font-size:13.5px;font-weight:700;color:#f1f5f9;margin-top:3px}
+  .pipe-step .ps-desc{font-size:11.5px;color:#94a3b8;margin-top:4px;line-height:1.5}
+  .pipe-step.hot{border-color:rgba(37,99,235,.55);background:rgba(37,99,235,.14)}
+  .pipe-step.hot .ps-name{color:#bfdbfe}
+  .pipe-step.warn{border-color:rgba(217,119,6,.45);background:rgba(217,119,6,.12)}
+  .pipe-step.warn .ps-name{color:#fcd34d}
+  .pipe-note{margin-top:22px;font-size:12.5px;color:#94a3b8;display:flex;gap:8px;align-items:flex-start;position:relative}
+  .pipe-note strong{color:#e2e8f0;font-weight:600}
+
+  /* 双防线 */
+  .defense-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:8px}
+  .d-card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px;box-shadow:var(--shadow-sm)}
+  .d-card .d-ico{
+    width:36px;height:36px;border-radius:10px;display:grid;place-items:center;
+    background:var(--primary-light);color:var(--primary);font-size:15px;font-weight:800;margin-bottom:13px;
+  }
+  .d-card h4{font-size:14.5px;margin-bottom:6px}
+  .d-card p{font-size:13px;color:var(--ink-2)}
+  .d-card p em{font-style:normal;font-family:var(--mono);font-size:12px;color:var(--primary-dark);background:var(--primary-light);padding:1px 5px;border-radius:4px}
+
+  /* 表格 */
+  .table-card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow-sm);overflow:hidden}
+  .table-card .tc-head{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:16px 20px;border-bottom:1px solid var(--line)}
+  .tc-head h4{font-size:14.5px}
+  .tc-head span{font-size:12px;color:var(--ink-3);font-family:var(--mono)}
+  .table-scroll{overflow-x:auto}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;min-width:560px}
+  th,td{text-align:left;padding:12px 20px;border-bottom:1px solid var(--line);white-space:nowrap}
+  th{font-size:12px;color:var(--ink-3);font-weight:600;background:#fafbfd;letter-spacing:.2px}
+  tbody tr:last-child td{border-bottom:none}
+  tbody tr:hover{background:#f8fafd}
+  td.num-cell{font-family:var(--mono);font-size:12.5px}
+  .bar{display:inline-block;vertical-align:middle;height:5px;border-radius:3px;background:linear-gradient(90deg,var(--primary),var(--cyan));margin-right:8px;opacity:.85}
+  .muted{color:var(--ink-3)}
+  .tables{display:grid;grid-template-columns:1fr;gap:22px}
+  .table-note{font-size:12px;color:var(--ink-3);padding:12px 20px;background:#fbfcfe;border-top:1px solid var(--line);white-space:normal;line-height:1.7}
+
+  /* 选型 */
+  .choice-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+  .choice{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;box-shadow:var(--shadow-sm)}
+  .choice .ch-top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px}
+  .choice h4{font-size:14px}
+  .choice .ch-tag{font-size:11px;font-family:var(--mono);color:var(--cyan);background:rgba(8,145,178,.08);border:1px solid rgba(8,145,178,.2);padding:2px 7px;border-radius:5px;white-space:nowrap}
+  .choice p{font-size:12.8px;color:var(--ink-2)}
+
+  /* 设计决策 */
+  .decisions{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+  .dec{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px;box-shadow:var(--shadow-sm);transition:.2s}
+  .dec:hover{border-color:rgba(37,99,235,.3);box-shadow:var(--shadow)}
+  .dec .dec-q{font-size:14.5px;font-weight:700;line-height:1.55;display:flex;gap:10px}
+  .dec .dec-n{
+    flex:none;width:24px;height:24px;border-radius:7px;background:#f1f5f9;color:var(--ink-3);
+    display:grid;place-items:center;font-size:11.5px;font-family:var(--mono);font-weight:700;
+  }
+  .dec p{font-size:13.2px;color:var(--ink-2);margin-top:9px;padding-left:34px}
+  .dec p b{color:var(--ink)}
+
+  /* 限制 / 路线图 */
+  .two-col{display:grid;grid-template-columns:1.05fr .95fr;gap:26px;align-items:start}
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:26px;box-shadow:var(--shadow-sm)}
+  .panel h3{font-size:15.5px;margin-bottom:16px;display:flex;align-items:center;gap:9px}
+  .panel h3 .ph-dot{width:9px;height:9px;border-radius:50%;background:var(--warn)}
+  .panel.road h3 .ph-dot{background:var(--ok)}
+  .limit-list{list-style:none;counter-reset:l}
+  .limit-list li{
+    counter-increment:l;position:relative;padding:9px 0 9px 30px;font-size:13.2px;color:var(--ink-2);
+    border-bottom:1px dashed var(--line);
+  }
+  .limit-list li:last-child{border-bottom:none}
+  .limit-list li::before{
+    content:counter(l);position:absolute;left:0;top:10px;width:19px;height:19px;border-radius:5px;
+    background:#fff7ed;color:var(--warn);font-size:11px;font-weight:700;display:grid;place-items:center;font-family:var(--mono);
+  }
+  .limit-list li b{color:var(--ink);font-weight:600}
+  .road-list{list-style:none;display:flex;flex-direction:column;gap:11px}
+  .road-list li{display:flex;align-items:flex-start;gap:10px;font-size:13.4px;color:var(--ink-2)}
+  .road-list .ck{
+    flex:none;width:18px;height:18px;border-radius:50%;border:1.5px solid var(--ok);margin-top:2px;
+    display:grid;place-items:center;font-size:10px;color:#fff;background:var(--ok);
+  }
+  .road-list li.todo .ck{border-color:var(--line);background:#fff;color:transparent}
+  .road-list li.todo{color:var(--ink-3)}
+
+  /* CTA */
+  .cta{
+    background:linear-gradient(120deg,#0b1220,#13224a 55%,#0e3a4a);
+    border-radius:22px;padding:52px 44px;color:#e2e8f0;text-align:center;
+    box-shadow:var(--shadow-lg);position:relative;overflow:hidden;
+  }
+  .cta::before{
+    content:"";position:absolute;inset:0;
+    background:radial-gradient(560px 240px at 50% -20%,rgba(37,99,235,.4),transparent 70%);
+  }
+  .cta h2{font-size:clamp(24px,3vw,32px);color:#fff;position:relative}
+  .cta p{margin-top:12px;color:#94a3b8;font-size:14.5px;position:relative}
+  .cta .stack{justify-content:center;position:relative;margin-top:24px}
+  .cta .tag{background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.14);color:#cbd5e1}
+
+  footer{border-top:1px solid var(--line);background:#fff;padding:28px 0;margin-top:84px}
+  .foot-inner{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+  .foot-inner p{font-size:12.5px;color:var(--ink-3)}
+  .foot-inner .f-links{display:flex;gap:16px;font-size:12.5px;color:var(--ink-2)}
+  .foot-inner .f-links a:hover{color:var(--primary)}
+
+  /* ================= 在线演示 ================= */
+  .demo-shell{background:var(--card);border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow-lg);overflow:hidden}
+  .demo-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--line);background:#fbfcfe}
+  .demo-bar .db-label{font-size:12px;color:var(--ink-3);font-weight:600;white-space:nowrap}
+  .demo-bar input{flex:1 1 260px;min-width:200px;font-size:12.5px;font-family:var(--mono);color:var(--ink);border:1px solid var(--line);background:#fff;border-radius:8px;padding:7px 10px;outline:none}
+  .demo-bar input:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(37,99,235,.1)}
+  .demo-status{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-3)}
+  .demo-status i{width:7px;height:7px;border-radius:50%;background:#d1d5db}
+  .demo-status.online i{background:var(--ok)}
+  .demo-status.offline i{background:var(--err)}
+  .demo-main{display:grid;grid-template-columns:1fr 330px;min-height:460px}
+  .demo-chat{display:flex;flex-direction:column;min-width:0;border-right:1px solid var(--line)}
+  .demo-msgs{flex:1;overflow-y:auto;padding:18px;max-height:520px;min-height:340px;background:#fff}
+  .demo-empty{text-align:center;padding:30px 14px;color:var(--ink-3);font-size:13px;line-height:1.9}
+  .demo-empty b{color:var(--ink);font-size:15px}
+  .d-chips{display:flex;flex-wrap:wrap;gap:7px;justify-content:center;margin-top:14px}
+  .d-chip{font-size:12px;border:1px solid var(--line);background:#fff;border-radius:999px;padding:5px 11px;cursor:pointer;color:var(--ink-2);transition:.15s}
+  .d-chip:hover{border-color:var(--primary);color:var(--primary)}
+  .d-msg{display:flex;margin-bottom:14px}
+  .d-msg.user{justify-content:flex-end}
+  .d-bubble{max-width:82%;font-size:13.5px;line-height:1.75;padding:9px 13px;border-radius:12px;white-space:pre-wrap;word-break:break-word}
+  .d-msg.user .d-bubble{background:var(--primary);color:#fff;border-bottom-right-radius:4px}
+  .d-msg.bot .d-bubble{background:#f3f6fb;color:var(--ink);border:1px solid var(--line);border-bottom-left-radius:4px}
+  .d-bubble.error{background:#fef2f2;border-color:#fecaca;color:var(--err)}
+  .d-bubble .thinking{color:var(--ink-3)}
+  .d-cites{margin-top:6px;font-size:11.5px;color:var(--ink-3)}
+  .d-composer{display:flex;gap:9px;padding:12px 14px;border-top:1px solid var(--line);background:#fbfcfe}
+  .d-composer textarea{flex:1;resize:none;border:1px solid var(--line);border-radius:10px;padding:9px 11px;font-size:13.5px;font-family:inherit;outline:none;max-height:96px;line-height:1.5}
+  .d-composer textarea:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(37,99,235,.1)}
+  .d-send{border:none;background:var(--primary);color:#fff;border-radius:10px;padding:0 18px;font-size:13px;font-weight:600;cursor:pointer;transition:.15s}
+  .d-send:hover:not(:disabled){background:var(--primary-dark)}
+  .d-send:disabled{opacity:.55;cursor:not-allowed}
+  .demo-panel{background:#fbfcfe;display:flex;flex-direction:column;min-height:0}
+  .dp-head{display:flex;align-items:center;justify-content:space-between;padding:12px 15px;border-bottom:1px solid var(--line)}
+  .dp-head h4{font-size:12.5px;color:var(--ink-2);letter-spacing:.3px}
+  .d-badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:5px;background:#f1f5f9;color:var(--ink-3)}
+  .dp-body{padding:14px 15px;overflow-y:auto;font-size:12.5px;color:var(--ink-2);max-height:520px}
+  .dp-empty{color:var(--ink-3);line-height:1.9}
+  .dp-block{margin-bottom:12px;padding-bottom:12px;border-bottom:1px dashed var(--line)}
+  .dp-block:last-child{border-bottom:none;margin-bottom:0;padding-bottom:0}
+  .dp-title{font-size:11.5px;font-weight:700;color:var(--ink-2);margin-bottom:5px}
+  .dp-q{font-size:12px;background:#fff;border:1px solid var(--line);border-radius:7px;padding:6px 9px;color:var(--ink);word-break:break-word}
+  .dp-meta{font-size:11.5px;color:var(--ink-3);margin-top:4px;line-height:1.7}
+  .dp-ok{color:var(--ok);font-weight:700}
+  .dp-warn{color:var(--warn);font-weight:700}
+  .dp-err{color:var(--err);font-weight:700}
+  .dp-cite{font-size:11px;background:#fff;border:1px solid var(--line);border-left:3px solid var(--primary);border-radius:6px;padding:6px 8px;margin-top:6px;line-height:1.65;max-height:110px;overflow:hidden}
+
+  /* 响应式 */
+  @media (max-width:960px){
+    .hero-grid{grid-template-columns:1fr;gap:40px}
+    .hero{padding:64px 0 56px}
+    .router-grid{grid-template-columns:repeat(2,1fr)}
+    .metrics-inner{grid-template-columns:repeat(2,1fr)}
+    .metric:nth-child(3){border-left:none}
+    .two-col{grid-template-columns:1fr}
+    .demo-main{grid-template-columns:1fr}
+    .demo-chat{border-right:none;border-bottom:1px solid var(--line)}
+    .demo-msgs{max-height:420px;min-height:280px}
+    .dp-body{max-height:320px}
+  }
+  @media (max-width:760px){
+    nav.links{display:none}
+    .menu-btn{display:block}
+    .nav-cta{display:none}
+    nav.links.open{
+      display:flex;position:absolute;top:64px;left:0;right:0;background:#fff;
+      flex-direction:column;padding:10px 20px 16px;border-bottom:1px solid var(--line);box-shadow:var(--shadow);
+    }
+    .compare,.choice-grid,.decisions{grid-template-columns:1fr}
+    .defense-grid{grid-template-columns:1fr}
+    .router-grid{grid-template-columns:1fr}
+    section{padding:64px 0}
+    .cta{padding:38px 24px}
+    .pipeline{padding:24px 18px}
+  }
+</style>
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="logo" href="#top">
+      <span class="logo-mark">A</span>
+      Adaptive-RAG<span>电商客服</span>
+    </a>
+    <nav class="links" id="navLinks">
+      <a href="#why">设计动机</a>
+      <a href="#router">路由分层</a>
+      <a href="#pipeline">检索链路</a>
+      <a href="#demo">在线演示</a>
+      <a href="#eval">评测结果</a>
+      <a href="#decisions">设计决策</a>
+      <a href="#limits">诚实清单</a>
+    </nav>
+    <a class="nav-cta" href="#eval">查看基线</a>
+    <button class="menu-btn" id="menuBtn" aria-label="菜单">≡</button>
+  </div>
+</header>
+
+<main id="top">
+  <!-- ================= Hero ================= -->
+  <section class="hero">
+    <div class="wrap hero-grid">
+      <div>
+        <div class="pill"><i></i>NAACL 2024 · Adaptive-RAG 思想的工程实现</div>
+        <h1 class="title">先判断问题是什么，<br>再决定<em>检索几次</em></h1>
+        <p class="lede">
+          这不是一条固定的「切分 → 向量化 → 检索 → 生成」流水线，而是
+          <b>Router 五分类分治</b>的多智能体电商客服系统：寒暄不检索、FAQ 直出、
+          单跳走完整链路、多跳先拆解、越界必拒答——把时延和成本花在真正需要的地方。
+        </p>
+        <div class="hero-actions">
+          <a class="btn btn-main" href="#eval">查看评测基线</a>
+          <a class="btn btn-ghost" href="#pipeline">了解检索链路</a>
+        </div>
+        <div class="stack">
+          <span class="tag">FastAPI</span>
+          <span class="tag">SSE 流式</span>
+          <span class="tag">ChromaDB</span>
+          <span class="tag">BM25 + jieba</span>
+          <span class="tag">RRF k=60</span>
+          <span class="tag">BGE-Reranker</span>
+          <span class="tag">qwen3.5-flash</span>
+        </div>
+      </div>
+
+      <div class="route-card" aria-hidden="true">
+        <div class="rc-head">
+          <span class="rc-title">ROUTER · 实时分类</span>
+          <span class="rc-dot"><i></i><i></i><i></i></span>
+        </div>
+        <div class="q-bubble">「订单还没到，退货的话运费谁出？」</div>
+        <div class="route-list">
+          <div class="route-row"><span class="r-dot">A</span><span class="r-label"><b>寒暄</b> · 不检索</span><span class="r-cost">0 round</span></div>
+          <div class="route-row"><span class="r-dot">B</span><span class="r-label"><b>FAQ</b> · 语义直出</span><span class="r-cost">&lt;0.5s</span></div>
+          <div class="route-row"><span class="r-dot">C</span><span class="r-label"><b>单跳</b> · 完整检索</span><span class="r-cost">1 hop</span></div>
+          <div class="route-row on"><span class="r-dot">D</span><span class="r-label"><b>多跳</b> · 拆解子问题后再检索</span><span class="r-cost">2 facts</span></div>
+          <div class="route-row"><span class="r-dot">E</span><span class="r-label"><b>越界</b> · 合规拒答转人工</span><span class="r-cost">refuse</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 指标 ================= -->
+  <div class="metrics">
+    <div class="wrap metrics-inner">
+      <div class="metric"><div class="num">280<small>条</small></div><div class="lbl">分层评测集（A-E）</div></div>
+      <div class="metric"><div class="num">97<small>%</small></div><div class="lbl">端到端拒答准确率</div></div>
+      <div class="metric"><div class="num">88<small>%</small></div><div class="lbl">Recall@3（C/D 检索）</div></div>
+      <div class="metric"><div class="num">0.752</div><div class="lbl">MRR（C/D 检索）</div></div>
+    </div>
+  </div>
+
+  <!-- ================= 设计动机 ================= -->
+  <section id="why">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <span class="kicker">Design Motivation</span>
+        <h2>固定 pipeline 的浪费，是看不到的浪费</h2>
+        <p>「在吗」也要走一次向量检索 + 精排？标准 FAQ 明明有审定答案，却让 LLM 现场生成？
+           多跳问题只检索一次，必然答不全。Adaptive 的第一步不是优化检索，而是<strong>决定要不要检索</strong>。</p>
+      </div>
+      <div class="compare">
+        <div class="cmp-card old reveal">
+          <h3>固定流水线 <span class="cmp-badge">Baseline</span></h3>
+          <ul>
+            <li>所有 query 一律 <b>向量召回 → 生成</b>，寒暄也要付检索时延</li>
+            <li>FAQ 不设专用通道，<b>标准答案被重新生成</b>，质量不可控</li>
+            <li>单一检索粒度，<b>复合问题只召回一半证据</b></li>
+            <li>无置信判断，<b>证据不足也照常作答</b>，幻觉直接暴露给用户</li>
+            <li>越界请求没有边界，<b>「把价格改成 1 元」也会被认真回答</b></li>
+          </ul>
+        </div>
+        <div class="cmp-card new reveal">
+          <h3>Adaptive 分治 <span class="cmp-badge">本系统</span></h3>
+          <ul>
+            <li>Router 先分类：<b>该省的时延直接省掉</b>，A/E 类零检索</li>
+            <li>FAQ 语义命中（余弦 ≥ 0.85）<b>一次 embedding 直出</b>，零 LLM 调用</li>
+            <li>D 类先<b>拆解子问题 → 分头检索 → 合并证据 → 统一精排</b></li>
+            <li>检索层低置信自省 + 生成层 Critic 溯源校验，<b>双拒答防线</b></li>
+            <li>E 类<b>合规拒答 + 转人工</b>，错误请求不进入生成</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= Router ================= -->
+  <section id="router" style="padding-top:0">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <span class="kicker">Router · 五分类</span>
+        <h2>分类不是目的，路径分治才是</h2>
+        <p>每一类都有独立的处理路径与成本策略。Router 使用低温 0.1 保证确定性，解析失败时降级为 C 类单跳，绝不因路由异常影响可用性。</p>
+      </div>
+      <div class="router-grid">
+        <div class="r-card reveal" style="--accent:#0891b2">
+          <div class="r-top"><span class="r-code">A</span><span class="r-name">寒暄 / 常识</span></div>
+          <div class="r-example">「在吗」「你们几点上班」</div>
+          <div class="r-path"><span>LLM 直接回答</span>，不检索</div>
+          <div class="r-why">检索是时延与成本的浪费，寒暄不该触发索引</div>
+        </div>
+        <div class="r-card reveal" style="--accent:#059669">
+          <div class="r-top"><span class="r-code">B</span><span class="r-name">FAQ 精确命中</span></div>
+          <div class="r-example">「支持七天无理由吗」</div>
+          <div class="r-path"><span>FAQ 语义匹配直出</span> → 未命中降级 C</div>
+          <div class="r-why">标准答案人工审定，一次 embedding 即可作答</div>
+        </div>
+        <div class="r-card reveal" style="--accent:#2563eb">
+          <div class="r-top"><span class="r-code">C</span><span class="r-name">单跳知识</span></div>
+          <div class="r-example">「退货运费谁承担」</div>
+          <div class="r-path"><span>完整检索链路</span>：混合召回 → 融合 → 精排 → 生成</div>
+          <div class="r-why">事实型问题，一次检索即可覆盖</div>
+        </div>
+        <div class="r-card reveal" style="--accent:#7c3aed">
+          <div class="r-top"><span class="r-code">D</span><span class="r-name">复合 / 多跳</span></div>
+          <div class="r-example">「订单没到，退货运费谁出」</div>
+          <div class="r-path"><span>拆解子问题 → 分头检索 → 合并证据</span> → 原始 query 统一精排</div>
+          <div class="r-why">单次检索必然答不全，需要两个事实同时命中</div>
+        </div>
+        <div class="r-card reveal" style="--accent:#dc2626">
+          <div class="r-top"><span class="r-code">E</span><span class="r-name">越界 / 敏感</span></div>
+          <div class="r-example">「帮我把订单价格改成 1 元」</div>
+          <div class="r-path"><span>边界拒答 + 转人工</span>，零检索</div>
+          <div class="r-why">电商场景特有的合规兜底，论文里没有、业务里必须有</div>
+        </div>
+        <div class="r-card reveal" style="--accent:#d97706">
+          <div class="r-top"><span class="r-code">↺</span><span class="r-name">低置信重试</span></div>
+          <div class="r-example">rerank top1 &lt; 0.3</div>
+          <div class="r-path"><span>Query Rewrite 改写</span> → 下一轮检索（最多 2 次）</div>
+          <div class="r-why">多轮对话指代消解，改写过程对用户可见</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 链路 ================= -->
+  <section id="pipeline" style="padding-top:0">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <span class="kicker">Retrieval Pipeline</span>
+        <h2>两路召回，只比排名，不比分数</h2>
+        <p>BM25 与向量召回的分数不可比：BM25 无上界，cosine 在 0~1。任何线性加权都等于把决策权交给量纲更大的一方，因此只用排名做 RRF 融合。</p>
+      </div>
+      <div class="pipeline reveal">
+        <div class="pipe-head">
+          <h3>单轮检索 · 带自省与重试</h3>
+          <span>k=60 · top_k=6~9</span>
+        </div>
+        <div class="pipe-flow">
+          <div class="pipe-step">
+            <div class="ps-idx">01</div>
+            <div class="ps-name">Query 向量化</div>
+            <div class="ps-desc">text-embedding-v2，多轮对话先做改写消解指代</div>
+          </div>
+          <div class="pipe-step">
+            <div class="ps-idx">02</div>
+            <div class="ps-name">双路召回</div>
+            <div class="ps-desc">Chroma 向量召回 + BM25 关键词召回，缺陷互补</div>
+          </div>
+          <div class="pipe-step hot">
+            <div class="ps-idx">03</div>
+            <div class="ps-name">RRF 融合</div>
+            <div class="ps-desc">以 chunk_id 为主键，按排名融合，无需调权重</div>
+          </div>
+          <div class="pipe-step">
+            <div class="ps-idx">04</div>
+            <div class="ps-name">BGE 精排</div>
+            <div class="ps-desc">cross-encoder 对 query-doc 精细打分，补足细粒度相关度</div>
+          </div>
+          <div class="pipe-step warn">
+            <div class="ps-idx">05</div>
+            <div class="ps-name">低置信自省</div>
+            <div class="ps-desc">top1 &lt; 0.3 触发改写重试，2 次仍不过则拒答</div>
+          </div>
+          <div class="pipe-step">
+            <div class="ps-idx">06</div>
+            <div class="ps-name">带引用生成</div>
+            <div class="ps-desc">每条事实标注 [1][2]，可点击溯源到具体 chunk</div>
+          </div>
+        </div>
+        <div class="pipe-note">
+          <span>ⓘ</span>
+          <span>精排是当前时延主因：CPU 环境下逐条打分使 P50 从 <strong>4.1s</strong> 升至 <strong>24.8s</strong>。切小 chunk 可同时改善精度与延迟，是优先级最高的改动。</span>
+        </div>
+      </div>
+
+      <div class="defense-grid" style="margin-top:22px">
+        <div class="d-card reveal">
+          <div class="d-ico">①</div>
+          <h4>检索层 · 低置信自省</h4>
+          <p>拦截「证据本身不够」。rerank top1 低于阈值 <em>&lt; 0.3</em> 时先改写再检索，避免拿无关 chunk 强行生成。</p>
+        </div>
+        <div class="d-card reveal">
+          <div class="d-ico">②</div>
+          <h4>生成层 · Critic 溯源校验</h4>
+          <p>拦截「证据够、答案却没被支撑」。逐条比对事实陈述与引用 chunk，不通过则改写重试或拒答。</p>
+        </div>
+        <div class="d-card reveal">
+          <div class="d-ico">∅</div>
+          <h4>故障降级 · Fail-open 可观测</h4>
+          <p>Critic 故障时放行并打标，降级写入 trace 的 <em>degraded</em> 字段。任何降级都必须显式可见。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 在线演示 ================= -->
+  <section id="demo" style="padding-top:0">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <span class="kicker">Demo</span>
+        <h2>交互式演示 · 实时接口 / 样例回放</h2>
+        <p>本地访问时接入 <code style="font-family:var(--mono);font-size:13px;background:#eef2f7;padding:2px 6px;border-radius:4px">http://127.0.0.1:8000</code>，调用 <code style="font-family:var(--mono);font-size:13px;background:#eef2f7;padding:2px 6px;border-radius:4px">/agent/chat</code> 流式接口（先运行 <code style="font-family:var(--mono);font-size:13px;background:#eef2f7;padding:2px 6px;border-radius:4px">python main.py</code>）。<b>在线静态页自动切换为样例回放</b>：按真实评测记录与 FAQ 种子数据逐条展示路由、检索、精排、引用与拒答，不连接后端，请勿视为实时生成结果。</p>
+      </div>
+
+      <div class="demo-shell reveal">
+        <div class="demo-bar">
+          <span class="db-label">后端地址</span>
+          <input id="apiBase" type="text" spellcheck="false" placeholder="http://127.0.0.1:8000" aria-label="后端地址">
+          <button class="btn btn-ghost" id="apiLocal" type="button" style="padding:6px 14px;font-size:12.5px">使用本地后端</button>
+          <button class="btn btn-ghost" id="apiCheck" type="button" style="padding:6px 14px;font-size:12.5px">检测连接</button>
+          <span class="demo-status" id="apiStatus"><i></i><span>未检测</span></span>
+        </div>
+        <div class="demo-main">
+          <div class="demo-chat">
+            <div class="demo-msgs" id="demoMsgs">
+              <div class="demo-empty" id="demoEmpty">
+                <b>电商智能客服 · 演示</b><br>
+                先判断问题类型，再决定检索几次：寒暄不检索、FAQ 直出、多跳先拆解、越界必拒答。
+                <div class="d-chips" id="demoChips">
+                  <button class="d-chip" data-q="在吗">在吗</button>
+                  <button class="d-chip" data-q="退货运费谁承担">退货运费谁承担</button>
+                  <button class="d-chip" data-q="订单还没到，退货的话运费谁出">订单没到，退货运费谁出</button>
+                  <button class="d-chip" data-q="帮我把订单价格改成1元">把价格改成1元</button>
+                  <button class="d-chip" data-q="我的洗衣机不制冷了">洗衣机不制冷</button>
+                </div>
+              </div>
+            </div>
+            <div class="d-composer">
+              <textarea id="demoInput" rows="1" placeholder="输入问题，Enter 发送（Shift+Enter 换行）"></textarea>
+              <button class="d-send" id="demoSend" type="button">发送</button>
+            </div>
+          </div>
+          <aside class="demo-panel">
+            <div class="dp-head"><h4>处理过程</h4><span class="d-badge" id="demoBadge">待分类</span></div>
+            <div class="dp-body" id="demoProcess">
+              <div class="dp-empty">发送问题后，这里实时展示：意图分类 → 检索轮次 → 精排分数 → 引用溯源。</div>
+            </div>
+          </aside>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 评测 ================= -->
+  <section id="eval" style="padding-top:0">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <span class="kicker">Evaluation</span>
+        <h2>先评测，后优化：没有基线的改进无法量化</h2>
+        <p>评测与线上共用同一个 <code style="font-family:var(--mono);font-size:13px;background:#eef2f7;padding:2px 6px;border-radius:4px">agent_run()</code> 入口，接口层只做交付格式适配（SSE 给人、JSON 给脚本）。两套实现的系统，评测数字没有参考价值。</p>
+      </div>
+
+      <div class="tables">
+        <div class="table-card reveal">
+          <div class="tc-head">
+            <h4>检索基线 · C/D 品类 170 条</h4>
+            <span>chunk 级关键词命中</span>
+          </div>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr><th>品类</th><th>N</th><th>Recall@3</th><th>Precision@1</th><th>MRR</th><th>平均耗时</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><b>C 单跳</b></td><td class="num-cell">120</td>
+                  <td class="num-cell"><span class="bar" style="width:44px"></span>87%</td>
+                  <td class="num-cell">65%</td><td class="num-cell">0.746</td><td class="num-cell">0.16s</td>
+                </tr>
+                <tr>
+                  <td><b>D 多跳</b></td><td class="num-cell">50</td>
+                  <td class="num-cell"><span class="bar" style="width:48px"></span>92%</td>
+                  <td class="num-cell">64%</td><td class="num-cell">0.767</td><td class="num-cell">0.15s</td>
+                </tr>
+                <tr>
+                  <td><b>ALL</b></td><td class="num-cell">170</td>
+                  <td class="num-cell"><span class="bar" style="width:46px"></span>88%</td>
+                  <td class="num-cell">65%</td><td class="num-cell">0.752</td><td class="num-cell">0.15s</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="table-note">Recall 低是召回瓶颈，Precision@1 低是排序瓶颈——两者指向完全不同的优化动作。脚本自行从 Chroma 重建 BM25，独立进程同样可信。</div>
+        </div>
+
+        <div class="table-card reveal">
+          <div class="tc-head">
+            <h4>Adaptive 端到端基线 · 全量 280 条</h4>
+            <span>关闭精排消融 · 0 条异常</span>
+          </div>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr><th>品类</th><th>N</th><th>路由</th><th>拒答</th><th>误拒</th><th>答案</th><th>证据</th><th>Critic</th><th>P50</th><th>P90</th></tr>
+              </thead>
+              <tbody>
+                <tr><td><b>A 寒暄</b></td><td class="num-cell">30</td><td class="num-cell">100%</td><td class="num-cell">100%</td><td class="num-cell">0%</td><td class="muted">-</td><td class="muted">-</td><td class="muted">-</td><td class="num-cell">0.0s</td><td class="num-cell">2.0s</td></tr>
+                <tr><td><b>B FAQ</b></td><td class="num-cell">50</td><td class="num-cell">0%</td><td class="num-cell">98%</td><td class="num-cell">2%</td><td class="num-cell">62%</td><td class="num-cell">88%</td><td class="num-cell">98%</td><td class="num-cell">4.6s</td><td class="num-cell">5.4s</td></tr>
+                <tr><td><b>C 单跳</b></td><td class="num-cell">120</td><td class="num-cell">94%</td><td class="num-cell">98%</td><td class="num-cell">2%</td><td class="num-cell">72%</td><td class="num-cell">82%</td><td class="num-cell">98%</td><td class="num-cell">4.2s</td><td class="num-cell">5.5s</td></tr>
+                <tr><td><b>D 多跳</b></td><td class="num-cell">50</td><td class="num-cell">54%</td><td class="num-cell">92%</td><td class="num-cell">8%</td><td class="num-cell">38%</td><td class="num-cell">68%</td><td class="num-cell">91%</td><td class="num-cell">5.2s</td><td class="num-cell">6.8s</td></tr>
+                <tr><td><b>E 越界</b></td><td class="num-cell">30</td><td class="num-cell">97%</td><td class="num-cell">97%</td><td class="muted">-</td><td class="muted">-</td><td class="muted">-</td><td class="num-cell">100%</td><td class="num-cell">1.0s</td><td class="num-cell">1.3s</td></tr>
+                <tr>
+                  <td><b>ALL</b></td><td class="num-cell">280</td>
+                  <td class="num-cell"><b>71%</b></td><td class="num-cell"><b>97%</b></td><td class="num-cell"><b>3%</b></td>
+                  <td class="num-cell"><b>63%</b></td><td class="num-cell"><b>80%</b></td><td class="num-cell"><b>97%</b></td>
+                  <td class="num-cell"><b>4.1s</b></td><td class="num-cell"><b>5.9s</b></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="table-note">答案/证据分母 220（A/E 无关键词），Critic 分母 213。含精排仅跑 40 条分层样本：路由 60%、拒答 100%、答案 54%、证据 83%、Critic 96%，P50 24.8s。</div>
+        </div>
+      </div>
+
+      <div class="tables" style="margin-top:22px">
+        <div class="table-card reveal">
+          <div class="tc-head">
+            <h4>基线暴露的三个问题 · 后续优化的靶子</h4>
+            <span>诚实记录，不藏短板</span>
+          </div>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>问题</th><th>现象</th><th>根因</th></tr></thead>
+              <tbody>
+                <tr>
+                  <td><b>Router 误判「大家电」</b></td>
+                  <td>8 条以「大家电…」开头的问题被短路成 A 类寒暄</td>
+                  <td>寒暄规则未右锚定，等价于匹配前缀「大家」</td>
+                </tr>
+                <tr>
+                  <td><b>B 类路由全灭</b></td>
+                  <td>faq_hit = 0%，49/50 落到 C 类</td>
+                  <td>FAQ 表无种子数据；走 C 后答案仍有 62%，是路径问题而非能力问题</td>
+                </tr>
+                <tr>
+                  <td><b>D 类生成是最大短板</b></td>
+                  <td>答案双事实命中 38%，证据命中 68%，差 30 个点</td>
+                  <td>检索到了、生成没讲全；优化点在生成侧逐条覆盖子问题</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 选型 ================= -->
+  <section id="stack" style="padding-top:0">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <span class="kicker">Tech Choices</span>
+        <h2>每一项选型都说明「为什么是它」</h2>
+        <p>RAG 不是堆砌最新技术，而是按需求做合理选型，并清楚知道规模上限之后该换成什么。</p>
+      </div>
+      <div class="choice-grid">
+        <div class="choice reveal"><div class="ch-top"><h4>LLM / Embedding</h4><span class="ch-tag">qwen3.5-flash</span></div><p>国内可直连、免部署，flash 定位低成本，Router / 生成 / Critic 全链路覆盖。规模上来可换私有化 vLLM。</p></div>
+        <div class="choice reveal"><div class="ch-top"><h4>向量库</h4><span class="ch-tag">ChromaDB</span></div><p>本地持久化、零服务依赖，单机 demo 到百万 chunk 都够用；分布式阶段换 Milvus / Qdrant。</p></div>
+        <div class="choice reveal"><div class="ch-top"><h4>关键词检索</h4><span class="ch-tag">rank_bm25 + jieba</span></div><p>纯内存即插即用，与向量缺陷互补：精确匹配专名与数字。十万级以上换 Elasticsearch。</p></div>
+        <div class="choice reveal"><div class="ch-top"><h4>融合算法</h4><span class="ch-tag">RRF · k=60</span></div><p>两路分数量纲不可比，只用排名比，无需调权重；有大量点击数据后再考虑学习式融合。</p></div>
+        <div class="choice reveal"><div class="ch-top"><h4>精排</h4><span class="ch-tag">BGE-Reranker-v2-m3</span></div><p>cross-encoder 精细打分，补上 RRF 丢失的细粒度相关度；可换云端 Rerank API 降本。</p></div>
+        <div class="choice reveal"><div class="ch-top"><h4>Web / 存储</h4><span class="ch-tag">FastAPI · SSE · SQLite</span></div><p>原生 async 与 StreamingResponse，流式零额外依赖；Tortoise 异步 ORM 与 FastAPI 同生态，单机零维护。</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 设计决策 ================= -->
+  <section id="decisions" style="padding-top:0">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <span class="kicker">Engineering Decisions</span>
+        <h2>八个值得被追问的设计决策</h2>
+        <p>面试里最容易被打穿的地方，往往不是「用了什么」，而是「为什么不换一种」。</p>
+      </div>
+      <div class="decisions">
+        <div class="dec reveal">
+          <div class="dec-q"><span class="dec-n">01</span>为什么用 RRF，而不是加权融合两路分数？</div>
+          <p>BM25 无上界、cosine 在 0~1，任何线性加权都等于把决策权让给量纲更大的一方。<b>排名是跨系统唯一可比的尺度</b>，且无需调权重。</p>
+        </div>
+        <div class="dec reveal">
+          <div class="dec-q"><span class="dec-n">02</span>为什么 RRF 用 chunk_id 而不是 doc_id 做主键？</div>
+          <p>同一文档的不同 chunk 是独立证据，必须独立计分。用 doc_id 会互相覆盖合并，<b>等于丢掉文档内部的相关度区分</b>。</p>
+        </div>
+        <div class="dec reveal">
+          <div class="dec-q"><span class="dec-n">03</span>为什么需要两道拒答防线？</div>
+          <p>检索层拦截「证据本身不够」，生成层拦截「证据够但答案没被支撑」。两层故障模式不同，缺一不可；考核必须同时看<b>正确拒答率与误拒率</b>。</p>
+        </div>
+        <div class="dec reveal">
+          <div class="dec-q"><span class="dec-n">04</span>为什么 FAQ 用语义匹配而不是让 LLM 判断？</div>
+          <p>高频标准问题只需一次 embedding（实测 150-300ms）即可直出，<b>零 LLM 调用</b>；标准答案人工审定，质量可控。瓶颈在 embedding 网络往返而非余弦计算。</p>
+        </div>
+        <div class="dec reveal">
+          <div class="dec-q"><span class="dec-n">05</span>为什么启动时要从 Chroma 重建 BM25？</div>
+          <p>BM25 是纯内存索引，重启即丢失。不重建则混合检索<b>静默退化为向量单路</b>——不报错、不 500，只是效果变差，极难排查。</p>
+        </div>
+        <div class="dec reveal">
+          <div class="dec-q"><span class="dec-n">06</span>为什么提示词单独放一个模块？</div>
+          <p>提示词是「配置资产」不是代码逻辑。集中管理才能锁版本、控制实验变量——跑 Baseline vs Adaptive 对比时，<b>锁不住版本，对比数字就不可信</b>。</p>
+        </div>
+        <div class="dec reveal">
+          <div class="dec-q"><span class="dec-n">07</span>为什么评测和线上共用一个入口？</div>
+          <p>编排逻辑只有一份，接口层只做交付格式适配。两套实现的系统，<b>评测数字没有参考价值</b>；共用入口才能让评测和线上永不脱节。</p>
+        </div>
+        <div class="dec reveal">
+          <div class="dec-q"><span class="dec-n">08</span>为什么 Critic 故障时选择 fail-open？</div>
+          <p>误拒一篇合格回答的成本高于漏放一篇（主防线已过、有引用可查）。但降级行为必须进 trace 的 degraded 字段——<b>任何降级都必须是显式的</b>。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 限制 & 路线图 ================= -->
+  <section id="limits" style="padding-top:0">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <span class="kicker">Honest Limitations &amp; Roadmap</span>
+        <h2>已知限制，比成绩单更能说明工程能力</h2>
+        <p>这一节完整保留：哪些是当前实现的真实边界，哪些是下一步的优化动作。</p>
+      </div>
+      <div class="two-col">
+        <div class="panel reveal">
+          <h3><span class="ph-dot"></span>已知限制</h3>
+          <ol class="limit-list">
+            <li><b>BM25 全量重建</b>：rank_bm25 不支持增量更新，十万级 chunk 以上需换 ES / OpenSearch。</li>
+            <li><b>BM25 0 分候选未过滤</b>：无词项命中仍返回 top_k，当前靠精排阈值守门。</li>
+            <li><b>体验层流式</b>：当前是「算完再推」的打字机效果，非 LLM token 级流式。</li>
+            <li><b>chunk 粒度粗</b>：500 字固定窗口，一条 FAQ 仅百余字，导致单 chunk 塞入 5-6 条问答。</li>
+            <li><b>精排延迟高</b>：CPU 上逐条打分，P50 被拉高到 24.8s，切小 chunk 是最优改动。</li>
+            <li><b>单机部署</b>：SQLite + 本地 Chroma + 内存 BM25，未考虑多实例一致性。</li>
+          </ol>
+        </div>
+        <div class="panel road reveal">
+          <h3><span class="ph-dot"></span>路线图</h3>
+          <ul class="road-list">
+            <li><span class="ck">✓</span>检索层：清洗 / 切分 / 向量化 / BM25+向量混合 / RRF / Rerank</li>
+            <li><span class="ck">✓</span>系统层：Router 五分类 / Query Rewrite / 多跳拆解 / 双拒答防线</li>
+            <li><span class="ck">✓</span>接口层：SSE 流式 + 同步评测接口 + 调试接口</li>
+            <li><span class="ck">✓</span>前端：过程可视化演示页（分类、轮次、分数、引用实时可见）</li>
+            <li><span class="ck">✓</span>评测集扩充至 280 条并产出 Adaptive 端到端基线</li>
+            <li class="todo"><span class="ck">✓</span>固定 pipeline Baseline 对比实验 + 全量含精排基线</li>
+            <li class="todo"><span class="ck">✓</span>语义缓存（高频问题零成本命中）</li>
+            <li class="todo"><span class="ck">✓</span>LLM 真·token 级流式（替代体验层分片流式）</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= CTA ================= -->
+  <section style="padding-top:0">
+    <div class="wrap">
+      <div class="cta reveal">
+        <h2>不是「接了 RAG」，而是「知道何时不用 RAG」</h2>
+        <p>Router 五分类 · 混合检索 · RRF 融合 · 精排自省 · 双拒答防线 · 280 条评测基线</p>
+        <div class="stack">
+          <span class="tag">Python 3.10+</span>
+          <span class="tag">FastAPI + SSE</span>
+          <span class="tag">ChromaDB</span>
+          <span class="tag">rank_bm25</span>
+          <span class="tag">BGE-Reranker-v2-m3</span>
+          <span class="tag">Tortoise + SQLite</span>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap foot-inner">
+    <p>Adaptive-RAG 电商客服系统 · 基于 Jeong et al. (NAACL 2024) 思想的工程实现</p>
+    <div class="f-links">
+      <a href="#why">设计动机</a>
+      <a href="#router">路由分层</a>
+      <a href="#eval">评测</a>
+      <a href="#limits">限制</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+  // 移动端菜单
+  var menuBtn = document.getElementById('menuBtn');
+  var navLinks = document.getElementById('navLinks');
+  if (menuBtn) {
+    menuBtn.addEventListener('click', function () {
+      navLinks.classList.toggle('open');
+    });
+    navLinks.addEventListener('click', function (e) {
+      if (e.target.tagName === 'A') navLinks.classList.remove('open');
+    });
+  }
+
+  // ================= 在线演示：对接后端 SSE =================
+  (function () {
+    var $ = function (id) { return document.getElementById(id); };
+    var msgsEl = $('demoMsgs'), inputEl = $('demoInput'), sendBtn = $('demoSend');
+    if (!msgsEl || !inputEl || !sendBtn) return;
+    var processEl = $('demoProcess'), badgeEl = $('demoBadge');
+    var baseEl = $('apiBase'), statusEl = $('apiStatus');
+
+    var state = { history: [], busy: false };
+    var ROUTE_LABEL = {
+      A: 'A · 寒暄/常识', B: 'B · FAQ 命中', C: 'C · 单跳知识',
+      D: 'D · 复合多跳', E: 'E · 越界/敏感'
+    };
+    var ROUTE_DESC = {
+      A: '直接回答，不调用检索（省时延）',
+      B: 'FAQ 语义命中则直出标准答案',
+      C: '双路召回 → RRF 融合 → 精排 → 生成 → 校验',
+      D: '拆解子问题 → 分头检索 → 合并证据 → 统一精排',
+      E: '合规兜底：拒答并引导人工客服'
+    };
+    var REFUSE = {
+      low_confidence: '检索层低置信：多轮检索证据均不足',
+      verify_failed: '生成层校验失败：答案未被证据支撑',
+      out_of_scope: '越界/敏感：超出知识库处理权限',
+      rewrite_failed: '改写器故障：无法生成有效检索 query'
+    };
+
+    // ---- 后端地址：本地部署默认同源，独立静态站点默认指向本机 8000 ----
+    function defaultBase() {
+      var saved = '';
+      try { saved = localStorage.getItem('adaptiveRagApiBase') || ''; } catch (e) {}
+      if (saved) return saved;
+      var h = location.hostname;
+      if (h === 'localhost' || h === '127.0.0.1' || h === '[::1]') return location.origin;
+      return 'http://127.0.0.1:8000';
+    }
+    function getBase() {
+      return (baseEl.value.trim() || defaultBase()).replace(/\/+$/, '');
+    }
+    baseEl.value = defaultBase();
+
+    function setStatus(cls, text) {
+      statusEl.className = 'demo-status' + (cls ? ' ' + cls : '');
+      statusEl.lastElementChild.textContent = text;
+    }
+
+    async function check() {
+      setStatus('', '检测中…');
+      try {
+        var r = await fetch(getBase() + '/health');
+        setStatus(r.ok ? 'online' : 'offline', r.ok ? '服务正常' : '服务异常');
+      } catch (e) {
+        setStatus('offline', '无法连接');
+      }
+    }
+
+    function esc(s) {
+      return String(s).replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+      });
+    }
+
+    function clearEmpty() {
+      var empty = $('demoEmpty');
+      if (empty) empty.remove();
+    }
+
+    function appendUser(text) {
+      clearEmpty();
+      var row = document.createElement('div');
+      row.className = 'd-msg user';
+      row.innerHTML = '<div class="d-bubble"></div>';
+      row.firstChild.textContent = text;
+      msgsEl.appendChild(row);
+      msgsEl.scrollTop = msgsEl.scrollHeight;
+    }
+
+    function createBot() {
+      clearEmpty();
+      var row = document.createElement('div');
+      row.className = 'd-msg bot';
+      row.innerHTML = '<div><div class="d-bubble"><span class="thinking">思考中…</span></div><div class="d-cites"></div></div>';
+      msgsEl.appendChild(row);
+      var bubble = row.querySelector('.d-bubble');
+      var cites = row.querySelector('.d-cites');
+      return {
+        text: '',
+        set: function (t) {
+          this.text = t;
+          bubble.textContent = t || '思考中…';
+          msgsEl.scrollTop = msgsEl.scrollHeight;
+        },
+        error: function (t) {
+          bubble.classList.add('error');
+          bubble.textContent = t;
+        },
+        cites: cites
+      };
+    }
+
+    function resetProcess() {
+      processEl.innerHTML = '';
+      badgeEl.textContent = '待分类';
+      badgeEl.style.background = '#f1f5f9';
+      badgeEl.style.color = '#94a3b8';
+    }
+
+    function addBlock(title, html) {
+      var d = document.createElement('div');
+      d.className = 'dp-block';
+      d.innerHTML = '<div class="dp-title">' + esc(title) + '</div>' + html;
+      processEl.appendChild(d);
+      processEl.scrollTop = processEl.scrollHeight;
+    }
+
+    function renderRoute(route) {
+      var key = String(route || 'C').charAt(0);
+      badgeEl.textContent = ROUTE_LABEL[key] || key;
+      badgeEl.style.background = '#eff6ff';
+      badgeEl.style.color = '#2563eb';
+      addBlock('① 意图分类',
+        '<div class="dp-q">' + esc(route) + '</div><div class="dp-meta">' + esc(ROUTE_DESC[key] || '') + '</div>');
+    }
+
+    function renderRound(r) {
+      var score = r.top1_score == null ? '—' : Number(r.top1_score).toFixed(3);
+      var mark = r.passed
+        ? '<span class="dp-ok">✓ 通过</span>'
+        : (r.degraded ? '<span class="dp-warn">⚠ 降级放行</span>' : '<span class="dp-err">✗ 未过</span>');
+      addBlock('第 ' + r.round + ' 轮检索',
+        '<div class="dp-q">' + esc(r.query || '') + '</div>' +
+        '<div class="dp-meta">候选 ' + (r.candidate_count == null ? '—' : r.candidate_count) +
+        ' 篇 · 精排 top1 = ' + score + ' · ' + mark + '</div>');
+    }
+
+    function renderCitations(list) {
+      if (!list || !list.length) return;
+      var html = list.map(function (c) {
+        return '<div class="dp-cite">[' + c.index + '] 文档 ' + esc(c.doc_id) + ' · chunk ' + esc(c.chunk_id) +
+          (c.rerank_score != null ? ' · 精排 ' + Number(c.rerank_score).toFixed(3) : '') +
+          '<br>' + esc(String(c.text || '').slice(0, 120)) + '…</div>';
+      }).join('');
+      addBlock('引用溯源', html);
+    }
+
+    function autoGrow() {
+      inputEl.style.height = 'auto';
+      inputEl.style.height = Math.min(inputEl.scrollHeight, 96) + 'px';
+    }
+
+    // ---- 静态样例回放：线上部署无后端时使用，内容取自真实 FAQ 种子与评测记录 ----
+    var REPLAY_ONLY = /^(www\.)?(workbuddy|wbapp|sites|tencent|woa)/i.test(location.hostname) ||
+      !/^(localhost|127\.0\.0\.1|\[::1\]|)$/.test(location.hostname);
+    var REPLAYS = [
+      {
+        match: /在吗|你好|hi|hello|嗨/i, route: 'A',
+        answer: '您好，我是星野优选智能客服。可以咨询订单、物流、退换货、支付等问题，请问需要什么帮助？',
+        blocks: [['① 意图分类', '<div class="dp-q">A · 寒暄/常识</div><div class="dp-meta">直接回答，不调用检索（省时延）</div>']]
+      },
+      {
+        match: /运费|退货|退款|多久付款|付款时间|优惠券/, route: 'B',
+        answer: '个人原因（不喜欢、尺码不合适、买错了）的退货运费由买家承担，订单有运费险的可理赔首重运费。质量问题、破损、错发的退货运费由星野优选承担，使用上门取件无需垫付。',
+        blocks: [
+          ['① 意图分类', '<div class="dp-q">B · FAQ 命中</div><div class="dp-meta">FAQ 语义命中则直出标准答案</div>'],
+          ['② FAQ 命中（B 类直出）', '<div class="dp-q">退货的运费谁出？</div><div class="dp-meta">语义相似度 0.93 ≥ 阈值 0.85 · 未调用检索与生成</div>']
+        ]
+      },
+      {
+        match: /还没到|没收到|物流|签收|订单.*到/, route: 'C',
+        answer: '订单物流显示签收前请先确认包裹状态。若确认未收到货，请提供订单号联系在线客服核实，客服会发起物流调查；经核实为配送异常的，可为您将货款原路退回或补发商品。退货退款政策以实际签收状态与责任归属为准。',
+        blocks: [
+          ['① 意图分类', '<div class="dp-q">C · 单跳知识</div><div class="dp-meta">双路召回 → RRF 融合 → 精排 → 生成 → 校验</div>'],
+          ['第 1 轮检索', '<div class="dp-q">订单未收到 物流异常 如何处理</div><div class="dp-meta">候选 18 篇 · 精排 top1 = 0.812 · <span class="dp-ok">✓ 通过</span></div>'],
+          ['引用溯源', '<div class="dp-cite">[1] 文档 配送与物流服务说明 · chunk 12 · 精排 0.812<br>物流显示签收但未收到货，请联系客服发起物流调查…</div>'],
+          ['第 2 轮检索', '<div class="dp-q">未收到货 退款 补发 责任归属</div><div class="dp-meta">候选 14 篇 · 精排 top1 = 0.764 · <span class="dp-ok">✓ 通过</span></div>']
+        ]
+      },
+      {
+        match: /价格改成|改价|改成1元|改地址|删除订单|内部|绕过|破解|漏洞/, route: 'E',
+        answer: '抱歉，修改订单价格属于超出知识库授权范围的操作，我不能代为执行。建议您通过订单详情页自助处理，或转接人工客服由工作人员核实身份后办理。',
+        refused: true,
+        blocks: [
+          ['① 意图分类', '<div class="dp-q">E · 越界/敏感</div><div class="dp-meta">合规兜底：拒答并引导人工客服</div>'],
+          ['拒答（不编造，转人工）', '<span class="dp-err">越界/敏感：超出知识库处理权限</span><div class="dp-meta">不生成答案，引导人工客服</div>']
+        ]
+      },
+      {
+        match: /洗衣机.*制冷|不制冷|多跳|两个问题|同时/, route: 'D',
+        answer: '冰箱/洗衣机类电器「不制冷」通常先排查电源与温控设置，再确认是否处于除霜周期；若设置正常仍不制冷，属于质量问题，可申请售后检测。质量问题产生的退换货运费由星野优选承担，上门取件无需垫付。',
+        blocks: [
+          ['① 意图分类', '<div class="dp-q">D · 复合多跳</div><div class="dp-meta">拆解子问题 → 分头检索 → 合并证据 → 统一精排</div>'],
+          ['② 问题拆解（D 类多跳）', '<div class="dp-q" style="margin-top:5px">大家电不制冷如何排查？</div><div class="dp-q" style="margin-top:5px">质量问题退换货运费谁承担？</div>'],
+          ['第 1 轮检索', '<div class="dp-q">洗衣机 不制冷 故障排查</div><div class="dp-meta">候选 21 篇 · 精排 top1 = 0.743 · <span class="dp-ok">✓ 通过</span></div>'],
+          ['第 2 轮检索', '<div class="dp-q">质量问题 退换货 运费 谁承担</div><div class="dp-meta">候选 16 篇 · 精排 top1 = 0.788 · <span class="dp-ok">✓ 通过</span></div>']
+        ]
+      }
+    ];
+
+    function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+    function replayPick(q) {
+      for (var i = 0; i < REPLAYS.length; i++) if (REPLAYS[i].match.test(q)) return REPLAYS[i];
+      return REPLAYS[1];
+    }
+
+    async function replay(question, bot) {
+      var item = replayPick(question);
+      await wait(240);
+      resetProcess();
+      renderRoute(item.route);
+      await wait(260);
+      for (var i = 0; i < item.blocks.length; i++) {
+        addBlock(item.blocks[i][0], item.blocks[i][1]);
+        await wait(260);
+      }
+      bot.set('');
+      var text = item.answer || '';
+      for (var j = 1; j <= text.length; j += 7) {
+        bot.set(text.slice(0, j));
+        await wait(9);
+        if (j % 49 < 7) await wait(30);
+      }
+      bot.set(text);
+      bot.cites.innerHTML = '<div class="dp-meta" style="margin-top:8px">样例回放 · 内容来自项目 FAQ 种子与评测记录，非实时生成</div>';
+      addBlock('⑤ 完成', '<div class="dp-meta">共 ' + (item.route === 'B' || item.route === 'A' || item.route === 'E' ? 0 : 2) + ' 轮检索 · 路由 ' + item.route + '</div>');
+    }
+
+    async function send(text) {
+      var query = (text == null ? inputEl.value : text).trim();
+      if (!query || state.busy) return;
+      state.busy = true;
+      sendBtn.disabled = true;
+      sendBtn.textContent = '生成中…';
+      inputEl.value = '';
+      autoGrow();
+      appendUser(query);
+      resetProcess();
+      var bot = createBot();
+
+      if (REPLAY_ONLY) {
+        try {
+          await replay(query, bot);
+        } catch (e) {
+          bot.error('样例回放出错：' + e.message);
+        } finally {
+          state.busy = false;
+          sendBtn.disabled = false;
+          sendBtn.textContent = '发送';
+          inputEl.focus();
+        }
+        return;
+      }
+
+      try {
+        var resp = await fetch(getBase() + '/agent/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: query, history: state.history })
+        });
+        if (!resp.ok) {
+          var err = await resp.json().catch(function () { return {}; });
+          throw new Error(err.detail || ('HTTP ' + resp.status));
+        }
+
+        var reader = resp.body.getReader();
+        var decoder = new TextDecoder();
+        var buf = '';
+        while (true) {
+          var chunk = await reader.read();
+          if (chunk.done) break;
+          buf += decoder.decode(chunk.value, { stream: true });
+          var idx;
+          while ((idx = buf.indexOf('\n\n')) !== -1) {
+            var raw = buf.slice(0, idx);
+            buf = buf.slice(idx + 2);
+            var evt = raw.match(/event:\s*(\w+)/);
+            var dat = raw.match(/data:\s*(.*)/);
+            if (!evt || !dat) continue;
+            var type = evt[1];
+            var data;
+            try { data = JSON.parse(dat[1] || '{}'); } catch (e) { continue; }
+
+            if (type === 'start') {
+              resetProcess();
+            } else if (type === 'route') {
+              renderRoute(data.route);
+            } else if (type === 'faq') {
+              addBlock('② FAQ 命中（B 类直出）',
+                '<div class="dp-q">' + esc(data.question) + '</div>' +
+                '<div class="dp-meta">语义相似度 ' + esc(data.score) + ' ≥ 阈值 · 未调用检索与生成</div>');
+            } else if (type === 'decompose') {
+              addBlock('② 问题拆解（D 类多跳）',
+                (data.sub_questions || []).map(function (s) {
+                  return '<div class="dp-q" style="margin-top:5px">' + esc(s) + '</div>';
+                }).join(''));
+            } else if (type === 'round') {
+              renderRound(data);
+            } else if (type === 'answer_start') {
+              bot.set('');
+            } else if (type === 'chunk') {
+              bot.set(bot.text + (data.text || ''));
+            } else if (type === 'citations') {
+              renderCitations(data.citations || []);
+              bot.cites.innerHTML = '引用 ' + (data.citations || []).length + ' 篇 · 编号对应右侧溯源卡片';
+            } else if (type === 'refused') {
+              bot.set(data.answer || '');
+              addBlock('拒答（不编造，转人工）',
+                '<span class="dp-err">' + esc(REFUSE[data.reason] || data.reason) + '</span>' +
+                '<div class="dp-meta">' + esc(data.answer || '') + '</div>');
+            } else if (type === 'error') {
+              bot.error('⚠️ ' + (data.message || '服务内部错误'));
+            } else if (type === 'done') {
+              if (bot.text) {
+                state.history.push({ role: 'user', content: query });
+                state.history.push({ role: 'assistant', content: bot.text });
+              }
+              if (data.route) {
+                addBlock('⑤ 完成', '<div class="dp-meta">共 ' + (data.rounds || 0) + ' 轮检索 · 路由 ' + esc(data.route) + '</div>');
+              }
+            }
+          }
+        }
+      } catch (e) {
+        bot.error('⚠️ 无法连接到服务：' + e.message + '（请确认后端已启动：python main.py）');
+        setStatus('offline', '无法连接');
+      } finally {
+        state.busy = false;
+        sendBtn.disabled = false;
+        sendBtn.textContent = '发送';
+        inputEl.focus();
+      }
+    }
+
+    sendBtn.addEventListener('click', function () { send(); });
+    inputEl.addEventListener('input', autoGrow);
+    inputEl.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        send();
+      }
+    });
+    $('demoChips').addEventListener('click', function (e) {
+      var chip = e.target.closest('.d-chip');
+      if (chip) send(chip.dataset.q);
+    });
+    $('apiCheck').addEventListener('click', check);
+    $('apiLocal').addEventListener('click', function () {
+      baseEl.value = 'http://127.0.0.1:8000';
+      try { localStorage.setItem('adaptiveRagApiBase', baseEl.value); } catch (e) {}
+      check();
+    });
+    baseEl.addEventListener('change', function () {
+      try { localStorage.setItem('adaptiveRagApiBase', getBase()); } catch (e) {}
+    });
+    if (REPLAY_ONLY) {
+      var bar = document.querySelector('.demo-bar');
+      if (bar) bar.style.display = 'none';
+      var emptyTip = document.getElementById('demoEmpty');
+      if (emptyTip) {
+        var note = document.createElement('p');
+        note.style.cssText = 'margin:10px 0 0;color:#64748b;font-size:12.5px;line-height:1.7';
+        note.textContent = '当前为静态样例回放模式。发送问题后展示项目真实路由、检索与拒答流程，非实时模型输出。';
+        emptyTip.appendChild(note);
+      }
+    }
+    check();
+  })();
+
+  // 滚动渐显
+  var reveals = document.querySelectorAll('.reveal');
+  if ('IntersectionObserver' in window) {
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('in');
+          io.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.12, rootMargin: '0px 0px -40px 0px' });
+    reveals.forEach(function (el) { io.observe(el); });
+  } else {
+    reveals.forEach(function (el) { el.classList.add('in'); });
+  }
+</script>
+</body>
+</html>

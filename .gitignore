@@ -1,0 +1,56 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+*.egg-info/
+
+# ===== 项目运行时产物 =====
+# SQLite 数据库（含 FAQ 与文档元数据，属于运行时数据）
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.sqlite3
+
+# 上传的原始 PDF（体积大，不进版本库）
+# 但 data/seed_docs/ 是内置演示知识库（3 份文档约 1.5MB），要跟仓库走，
+# 否则 clone 下来是个空库、README 里"一条命令导入"就落空。
+# 注意规则写法：先忽略 data/ 下的直接子项，再把 seed_docs 整个目录重新纳入
+# （不能写 data/ 再 !data/seed_docs/——父目录被忽略后 git 根本不会进去找）
+data/*
+!data/seed_docs/
+
+# Chroma 向量库持久化目录（可由 PDF 重新生成）
+chroma_db/
+
+# 日志
+logs/
+*.log
+
+# ===== 模型权重（体积巨大，统一放本地，不进版本库）=====
+# bge-reranker-v2-m3 约 2.2GB。
+# 拉代码后自行下载：
+#   huggingface-cli download BAAI/bge-reranker-v2-m3 \
+#       --local-dir ./local_models/bge-reranker-v2-m3
+# 或走 ModelScope：
+#   modelscope download --model BAAI/bge-reranker-v2-m3 \
+#       --local_dir ./local_models/bge-reranker-v2-m3
+# config.py 会自动探测该目录，存在即优先使用。
+local_models/
+
+# ===== 环境与编辑器 =====
+.env
+.env.*
+!.env.example
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# ===== 本机工具与求职资料（不进公开仓库）=====
+.workbuddy/
+.wbapp_*.genie
+.screenshots/
+Adaptive-RAG_求职项目深度解析.docx
